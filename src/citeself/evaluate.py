@@ -63,7 +63,7 @@ class EvalItem(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1)
     question: str = Field(min_length=1)
-    my_answer: str = Field(min_length=1)
+    my_answer: str = ""                   # must be filled in before running
     covered: bool = True                  # do you believe your ingested material addresses this?
     my_answer_retest: str | None = None   # optional: answer again later, without looking, to set the ceiling
 
@@ -121,6 +121,9 @@ def load_eval_set(root: Path) -> list[EvalItem]:
         raise ManifestError(f"{path}: item ids must be unique")
     if any(i.question.startswith("Replace with") for i in items):
         raise ManifestError(f"{path} still contains the template example. Write your own questions and answers.")
+    missing = [i.id for i in items if not i.my_answer.strip()]
+    if missing:
+        raise ManifestError(f"{path}: write your own answer for {len(missing)} question(s) first: {', '.join(missing)}")
     return items
 
 

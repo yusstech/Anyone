@@ -118,3 +118,11 @@ def test_score_blind_ratings(eval_dir):
         w.writerows(rows)
     with pytest.raises(ValueError, match="1-5"):
         score_ratings(out)
+
+
+def test_unanswered_questions_are_listed(tmp_path):
+    (tmp_path / EVAL_FILE).write_text(yaml.safe_dump({"items": [
+        {"id": "a", "question": "Q?", "my_answer": "Mine."}, {"id": "b", "question": "Q2?", "my_answer": "  "},
+        {"id": "c", "question": "Q3?"}]}))
+    with pytest.raises(ManifestError, match="2 question\\(s\\) first: b, c"):
+        load_eval_set(tmp_path)
