@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -71,24 +72,114 @@ def cmd_init(args) -> int:
     return 0
 
 
+def _ask_authorship(args, what: str) -> str:
+    """Authorship decides whether text may be quoted as the owner's own words, so ask when unsure."""
+    if getattr(args, "authorship", None):
+        return args.authorship
+    if not sys.stdin.isatty():
+        print(style("2", f"Treating {what} as written by you (by_me). Use --authorship ai_assisted if not."))
+        return "by_me"
+    print(f"Did you write {what} yourself, word for word?")
+    print("  [y] yes, I wrote it        -> it can be quoted as your words")
+    print("  [a] AI-assisted / drafted by someone else -> used as context only, never quoted as you")
+    print("  [n] no, it isn't mine      -> don't import it")
+    while True:
+        ans = input("> ").strip().lower()
+        if ans in ("y", "yes", ""):
+            return "by_me"
+        if ans in ("a", "ai"):
+            return "ai_assisted"
+        if ans in ("n", "no"):
+            raise ValueError("Not imported: CiteSelf only uses material you wrote or approved.")
+
+
+def _print_ingest(res, st) -> None:
+    for s in res.added:
+        tag = "" if s.authorship == "by_me" else style("33", " [ai_assisted]")
+        print(f"  + {s.id}  {s.date or '          '}  {s.title}  ({s.chunks} chunks){tag}")
+    for old in res.replaced:
+        print(style("2", f"  ~ replaced older version {old}"))
+    for p in res.skipped_duplicates:
+        print(style("2", f"  = unchanged: {p}"))
+    for p, err in res.errors:
+        print(style("31", f"  ! {p}: {err}"), file=sys.stderr)
+    print(f"{len(res.added)} added, {len(res.replaced)} updated, {len(res.skipped_duplicates)} unchanged, "
+          f"{len(res.errors)} error(s). Corpus: {st['sources']} sources, {st['chunks']} chunks.")
+
+
 def cmd_ingest(args) -> int:
     root = _root(args)
     manifest = load_manifest(root)
     manifest.require_consent()
+    authorship = _ask_authorship(args, "these files")
     with Store(root / DATA_DIR / "index.db") as store:
-        res = store.ingest_paths([Path(p) for p in args.paths], manifest.privacy.redact_names, args.date)
-        for s in res.added:
-            print(f"  + {s.id}  {s.title}  ({s.chunks} chunks)")
-        for old in res.replaced:
-            print(style("2", f"  ~ replaced older version {old}"))
-        for p in res.skipped_duplicates:
-            print(style("2", f"  = already ingested: {p}"))
-        for p, err in res.errors:
-            print(style("31", f"  ! {p}: {err}"), file=sys.stderr)
-        st = store.stats()
-    print(f"{len(res.added)} added, {len(res.skipped_duplicates)} duplicate(s), {len(res.errors)} error(s). "
-          f"Corpus: {st['sources']} sources, {st['chunks']} chunks.")
+        res = store.ingest_paths([Path(p) for p in args.paths], manifest.privacy.redact_names, args.date, authorship)
+        _print_ingest(res, store.stats())
     return 1 if res.errors and not res.added else 0
+
+
+def _looks_like_url(target: str) -> bool:
+    return bool(re.match(r"^https?://", target, re.I)) or (
+        not Path(target).exists() and bool(re.match(r"^[\w-]+(\.[\w-]+)+(/.*)?$", target)))
+
+
+def cmd_add(args) -> int:
+    target = args.target
+    if not _looks_like_url(target):
+        args.paths, args.date = [target], None
+        return cmd_ingest(args)
+
+    from .importers.site import ImportError_, canonical, import_site
+    from .store import IngestResult
+
+    root = _root(args)
+    manifest = load_manifest(root)
+    manifest.require_consent()
+    print(f"Looking for your writing on {target} (respecting robots.txt, about 1 request per second)...", flush=True)
+    try:
+        found = import_site(target, max_pages=args.max_pages, exclude=args.exclude, delay=args.delay,
+                            progress=lambda n, total, u: print(style("2", f"  [{n}/{total}] {u}"), file=sys.stderr))
+    except ImportError_ as exc:
+        raise ValueError(str(exc)) from exc
+    print(f"Found {len(found.pages)} page(s) via {', '.join(found.discovered_via)}; skipped {len(found.skipped)}.")
+    if args.verbose or args.dry_run:
+        for u, why in found.skipped:
+            print(style("2", f"  - {u}  ({why})"))
+    if args.dry_run:
+        for pg in found.pages:
+            print(f"  + {pg.date or '          '}  {pg.title}  ({len(pg.text.split())} words)  {pg.url}")
+        print("Dry run: nothing was imported.")
+        return 0
+    if not found.pages:
+        print("Nothing to import.")
+        return 1
+    authorship = _ask_authorship(args, f"the {len(found.pages)} page(s) on {found.site}")
+    res = IngestResult([], [], [])
+    with Store(root / DATA_DIR / "index.db") as store:
+        for pg in found.pages:
+            try:
+                row = store.ingest_text(pg.url, pg.title, pg.date, pg.text, result=res,
+                                        redact_names=manifest.privacy.redact_names, authorship=authorship,
+                                        origin="site", ownership_proof="unverified_site", url=pg.url)
+            except ValueError as exc:
+                res.errors.append((pg.url, str(exc)))
+                continue
+            (res.added if row else res.skipped_duplicates).append(row or pg.url)
+        _print_ingest(res, store.stats())
+        gone = set(store.keys_with_prefix(canonical(found.site))) - {pg.url for pg in found.pages}
+        gone -= {u for u, _ in found.skipped}
+    if gone:
+        print(style("33", f"{len(gone)} previously imported page(s) were not found this time "
+                          "(deleted or moved?). Review with `citeself sources` and `citeself remove <id>`."))
+    return 0
+
+
+def cmd_authorship(args) -> int:
+    root = _root(args)
+    with Store(root / DATA_DIR / "index.db") as store:
+        ok = store.set_authorship(args.source_id, args.value)
+    print(f"{args.source_id} marked {args.value}" if ok else f"No source {args.source_id}")
+    return 0 if ok else 1
 
 
 def cmd_sources(args) -> int:
@@ -100,7 +191,9 @@ def cmd_sources(args) -> int:
         return 0
     for s in rows:
         flag = style("31", " [excluded]") if s.excluded else ""
-        print(f"{s.id}  {s.date or '----------'}  {s.title}  ({s.chunks} chunks){flag}\n    {style('2', s.path)}")
+        who = "" if s.authorship == "by_me" else style("33", f" [{s.authorship}]")
+        print(f"{s.id}  {s.date or '----------'}  {s.title}  ({s.chunks} chunks){who}{flag}")
+        print(style("2", f"    {s.path}  · {s.origin}, {s.ownership_proof.replace('_', ' ')}"))
     return 0
 
 
@@ -251,7 +344,23 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("ingest", help="add your writing (.md .txt .html .pdf files or folders)")
     s.add_argument("paths", nargs="+")
     s.add_argument("--date", help="date for these sources (YYYY-MM-DD) if not in front matter")
+    s.add_argument("--authorship", choices=["by_me", "ai_assisted"], help="who wrote these (asked if omitted)")
     s.set_defaults(func=cmd_ingest)
+
+    s = sub.add_parser("add", help="add your content: a website/blog URL, a file or a folder")
+    s.add_argument("target", help="e.g. yourname.com, https://you.substack.com, ~/writing")
+    s.add_argument("--authorship", choices=["by_me", "ai_assisted"], help="who wrote it (asked if omitted)")
+    s.add_argument("--max-pages", type=int, default=200)
+    s.add_argument("--exclude", action="append", default=[], metavar="REGEX", help="skip URLs matching this (repeatable)")
+    s.add_argument("--dry-run", action="store_true", help="show what would be imported, import nothing")
+    s.add_argument("--delay", type=float, default=1.0, help="seconds between requests (robots.txt crawl-delay wins if larger)")
+    s.add_argument("-v", "--verbose", action="store_true", help="list skipped pages and why")
+    s.set_defaults(func=cmd_add)
+
+    s = sub.add_parser("authorship", help="mark a source as written by you or AI-assisted")
+    s.add_argument("source_id")
+    s.add_argument("value", choices=["by_me", "ai_assisted"])
+    s.set_defaults(func=cmd_authorship)
 
     sub.add_parser("sources", help="list ingested sources").set_defaults(func=cmd_sources)
     for name, fn, helptext in (("exclude", lambda a: _toggle(a, True), "stop using a source in answers"),

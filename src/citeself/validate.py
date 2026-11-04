@@ -7,7 +7,8 @@ Rules (applied in order, every decision recorded in the report):
 2. Evidence IDs the model was not given are stripped (fabricated citations).
 3. ``quote``: after stripping wrapping quote marks, the text must appear
    verbatim (modulo typographic normalization) in at least one cited evidence
-   chunk and be at least ``min_quote_words`` long. Citations are narrowed to the
+   chunk the owner wrote themselves (authorship ``by_me``) and be at least
+   ``min_quote_words`` long. Citations are narrowed to the
    chunks that actually contain it. A failed quote is demoted to
    ``extrapolation`` — it is never shown as the owner's words.
 4. ``extrapolation`` must cite at least one valid evidence ID, otherwise it is
@@ -97,14 +98,19 @@ def validate_segments(raw_segments: object, evidence: dict[str, Evidence], *, mi
         if kind == "quote":
             quote = strip_wrapping_quotes(text)
             needle = normalize(quote)
-            containing = [eid for eid in valid_ids if needle and needle in normalize(evidence[eid].text)]
+            found = [eid for eid in valid_ids if needle and needle in normalize(evidence[eid].text)]
+            containing = [eid for eid in found if evidence[eid].quotable]
             if containing and len(needle.split()) >= min_quote_words:
                 out.append(Segment("quote", quote, containing, verified=True))
                 report.quotes_verified += 1
                 continue
             report.quotes_demoted += 1
-            reason = ("quote shorter than minimum length" if containing
-                      else "quote not found verbatim in cited sources")
+            if found and not containing:
+                reason = "source is marked AI-assisted, so it is not shown as the owner's own words"
+            elif containing:
+                reason = "quote shorter than minimum length"
+            else:
+                reason = "quote not found verbatim in cited sources"
             kind, text = "extrapolation", quote
             note = f"demoted: {reason}"
         else:

@@ -42,7 +42,8 @@ class Answer:
             "status": self.status,
             "segments": [s.to_dict() for s in self.segments],
             "evidence": {
-                label: {"source_id": e.source_id, "chunk_id": e.chunk_id, "title": e.title, "date": e.date, "text": e.text}
+                label: {"source_id": e.source_id, "chunk_id": e.chunk_id, "title": e.title, "date": e.date,
+                        "text": e.text, "url": e.url, "authorship": e.authorship}
                 for label, e in self.evidence.items() if label in self.cited_labels()
             },
             "model": self.model,
@@ -77,7 +78,8 @@ def build_system_prompt(m: Manifest) -> str:
         "Answer with a list of segments. Each segment is one of:",
         f'- "quote": words {n} actually wrote, copied exactly, character for character, as ONE contiguous span from ONE '
         "evidence passage. No ellipses, no edits, no stitching. Put that passage's ID in evidence_ids. "
-        "Quotes are the most trustworthy thing you can offer, so lead with them.",
+        "Quotes are the most trustworthy thing you can offer, so lead with them. Never quote a passage marked "
+        f'authorship="ai_assisted": {n} did not write it word for word; use it only as context for extrapolation.',
     ]
     if m.boundaries.allow_extrapolation:
         lines.append(
@@ -114,7 +116,8 @@ def _evidence_block(evidence: dict[str, Evidence]) -> str:
     parts = ["<evidence>"]
     for label, e in evidence.items():
         title = _neutralize(e.title).replace('"', "'")
-        parts.append(f'<source id="{label}" title="{title}" date="{e.date or "unknown"}">\n{_neutralize(e.text)}\n</source>')
+        who = "" if e.quotable else ' authorship="ai_assisted"'
+        parts.append(f'<source id="{label}" title="{title}" date="{e.date or "unknown"}"{who}>\n{_neutralize(e.text)}\n</source>')
     parts.append("</evidence>")
     return "\n".join(parts)
 

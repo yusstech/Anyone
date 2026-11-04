@@ -22,6 +22,7 @@ dependencies = [
   "anthropic>=2.4",
   "pydantic>=2.7",
   "pyyaml>=6.0",
+  "protego>=0.3",
 ]
 
 [project.optional-dependencies]

@@ -27,7 +27,8 @@ pip install "citeself[pdf,mcp] @ git+https://github.com/yusstech/PersonaLab"
 
 mkdir me && cd me
 citeself init --name "Your Name"          # creates persona.yaml and asks you to self-attest
-citeself ingest ~/writing/                 # .md .txt .html .pdf files or folders
+citeself add yourname.com                  # your website or blog: finds the feed/sitemap, respects robots.txt
+citeself add ~/writing/                    # or files/folders: .md .txt .html .pdf .docx
 citeself ask "How do you think about pricing?" --provider extractive   # offline, no API key needed
 ```
 
@@ -100,6 +101,24 @@ retrieval:
   top_k: 6
   min_quote_words: 3
 ```
+
+## Adding your content
+
+`citeself add <anything>` works out what you gave it:
+
+| You give it | What happens |
+|---|---|
+| Your website or blog URL | Finds your RSS/Atom feed, the WordPress API or your sitemap, then imports the main text and date of each page. Follows robots.txt (RFC 9309), stays on your domain, makes about 1 request per second, and skips privacy, login and tag pages. Re-run it to pick up new or edited posts. Use `--dry-run` to preview. |
+| A file or folder | `.md` `.txt` `.html` `.pdf` `.docx` |
+
+**Authorship matters.** CiteSelf asks whether you wrote each import yourself:
+
+- `by_me`: can be quoted as your words.
+- `ai_assisted`: drafted with AI or by someone else. Used only as context and **never shown as your verbatim words**, even if the model tries.
+
+Change it later with `citeself authorship <source-id> ai_assisted`. Don't import other people's books or articles at all.
+
+Coming next: LinkedIn, X, Substack and Medium export imports, and `citeself interview`, which builds your record by interviewing you.
 
 ## Managing your corpus
 

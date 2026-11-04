@@ -20,7 +20,11 @@ CREATE TABLE IF NOT EXISTS sources (
   sha256 TEXT NOT NULL UNIQUE,
   added_at TEXT NOT NULL,
   excluded INTEGER NOT NULL DEFAULT 0,
-  text TEXT NOT NULL
+  text TEXT NOT NULL,
+  authorship TEXT NOT NULL DEFAULT 'by_me',
+  origin TEXT NOT NULL DEFAULT 'file',
+  ownership_proof TEXT NOT NULL DEFAULT 'local_file',
+  url TEXT
 );
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -33,6 +37,18 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(chunk_id UNINDEXED, text, tokenize='porter unicode61');
 """
 
+# Columns added after v0.1.0.dev0; older indexes are migrated in place.
+_SOURCE_MIGRATIONS = {
+    "authorship": "TEXT NOT NULL DEFAULT 'by_me'",
+    "origin": "TEXT NOT NULL DEFAULT 'file'",
+    "ownership_proof": "TEXT NOT NULL DEFAULT 'local_file'",
+    "url": "TEXT",
+}
+
+# by_me: the owner wrote it; verbatim quotes allowed.
+# ai_assisted: drafted with AI or others; usable as context, never shown as the owner's verbatim words.
+AUTHORSHIP = ("by_me", "ai_assisted")
+
 
 @dataclass(frozen=True)
 class Evidence:
@@ -43,6 +59,12 @@ class Evidence:
     path: str
     text: str
     score: float = 0.0
+    authorship: str = "by_me"
+    url: str | None = None
+
+    @property
+    def quotable(self) -> bool:
+        return self.authorship == "by_me"
 
 
 @dataclass(frozen=True)
@@ -55,6 +77,10 @@ class SourceRow:
     excluded: bool
     chunks: int
     sha256: str
+    authorship: str = "by_me"
+    origin: str = "file"
+    ownership_proof: str = "local_file"
+    url: str | None = None
 
 
 @dataclass
@@ -73,6 +99,11 @@ class Store:
         self.conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        have = {r[1] for r in self.conn.execute("PRAGMA table_info(sources)")}
+        with self.conn:
+            for col, decl in _SOURCE_MIGRATIONS.items():
+                if col not in have:
+                    self.conn.execute(f"ALTER TABLE sources ADD COLUMN {col} {decl}")
 
     def close(self) -> None:
         self.conn.close()
@@ -86,12 +117,14 @@ class Store:
     # ---------------------------------------------------------------- ingest
 
     def ingest_paths(self, paths: list[Path], redact_names: list[str] | None = None,
-                     date_override: str | None = None) -> IngestResult:
+                     date_override: str | None = None, authorship: str = "by_me") -> IngestResult:
         result = IngestResult([], [], [])
         for path in _expand(paths):
             path = path.resolve()
             try:
-                row = self._ingest_file(path, redact_names or [], date_override, result)
+                ex = extract(path)
+                row = self.ingest_text(str(path), ex.title, date_override or ex.date, ex.text, result=result,
+                                       redact_names=redact_names, authorship=authorship)
             except (OSError, ValueError) as exc:
                 result.errors.append((str(path), str(exc)))
                 continue
@@ -101,27 +134,34 @@ class Store:
                 result.added.append(row)
         return result
 
-    def _ingest_file(self, path: Path, redact_names: list[str], date_override: str | None,
-                     result: IngestResult) -> SourceRow | None:
-        ex = extract(path)
-        text = redact(clean_text(ex.text), redact_names)
+    def ingest_text(self, key: str, title: str, date: str | None, text: str, *, result: IngestResult | None = None,
+                    redact_names: list[str] | None = None, authorship: str = "by_me", origin: str = "file",
+                    ownership_proof: str = "local_file", url: str | None = None) -> SourceRow | None:
+        """Add one document. ``key`` identifies it across re-imports (file path or canonical URL).
+
+        Returns None if identical content is already indexed. If ``key`` exists with different
+        content (edited, or new redaction rules), the new version replaces the old one.
+        """
+        if authorship not in AUTHORSHIP:
+            raise ValueError(f"authorship must be one of {AUTHORSHIP}")
+        text = redact(clean_text(text), redact_names or [])
         if not text:
             raise ValueError("no extractable text")
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if self.conn.execute("SELECT 1 FROM sources WHERE sha256 = ?", (digest,)).fetchone():
             return None
-        # Same file, new content (edited, or new redaction rules): the new version replaces the old,
-        # so stale or unredacted text never lingers in the index.
-        for (old_id,) in self.conn.execute("SELECT id FROM sources WHERE path = ?", (str(path),)).fetchall():
+        for (old_id,) in self.conn.execute("SELECT id FROM sources WHERE path = ?", (key,)).fetchall():
             self.remove_source(old_id)
-            result.replaced.append(old_id)
+            if result is not None:
+                result.replaced.append(old_id)
         source_id = f"src-{digest[:10]}"
         added_at = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
         chunks: list[Chunk] = chunk_text(text)
         with self.conn:
             self.conn.execute(
-                "INSERT INTO sources (id, path, title, date, sha256, added_at, text) VALUES (?,?,?,?,?,?,?)",
-                (source_id, str(path), ex.title, date_override or ex.date, digest, added_at, text),
+                "INSERT INTO sources (id, path, title, date, sha256, added_at, text, authorship, origin, "
+                "ownership_proof, url) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (source_id, key, title, date, digest, added_at, text, authorship, origin, ownership_proof, url),
             )
             for c in chunks:
                 chunk_id = f"{source_id}#{c.ordinal}"
@@ -131,6 +171,11 @@ class Store:
                 )
                 self.conn.execute("INSERT INTO chunks_fts (chunk_id, text) VALUES (?, ?)", (chunk_id, c.text))
         return self.get_source(source_id)
+
+    def keys_with_prefix(self, prefix: str) -> dict[str, str]:
+        """Map key -> source id for all sources whose key starts with ``prefix`` (e.g. a site URL)."""
+        rows = self.conn.execute("SELECT path, id FROM sources WHERE substr(path, 1, ?) = ?", (len(prefix), prefix))
+        return {r[0]: r[1] for r in rows}
 
     # --------------------------------------------------------------- sources
 
@@ -147,6 +192,13 @@ class Store:
             (source_id,),
         ).fetchone()
         return _source_row(r) if r else None
+
+    def set_authorship(self, source_id: str, authorship: str) -> bool:
+        if authorship not in AUTHORSHIP:
+            raise ValueError(f"authorship must be one of {AUTHORSHIP}")
+        with self.conn:
+            cur = self.conn.execute("UPDATE sources SET authorship = ? WHERE id = ?", (authorship, source_id))
+        return cur.rowcount == 1
 
     def set_excluded(self, source_id: str, excluded: bool) -> bool:
         with self.conn:
@@ -180,7 +232,7 @@ class Store:
         rows = self.conn.execute(
             """
             SELECT c.id AS chunk_id, c.text, s.id AS source_id, s.title, s.date, s.path,
-                   bm25(chunks_fts) AS score
+                   s.authorship, s.url, bm25(chunks_fts) AS score
             FROM chunks_fts
             JOIN chunks c ON c.id = chunks_fts.chunk_id
             JOIN sources s ON s.id = c.source_id
@@ -192,7 +244,8 @@ class Store:
         ).fetchall()
         return [
             Evidence(chunk_id=r["chunk_id"], source_id=r["source_id"], title=r["title"], date=r["date"],
-                     path=r["path"], text=r["text"], score=round(-r["score"], 4))
+                     path=r["path"], text=r["text"], score=round(-r["score"], 4),
+                     authorship=r["authorship"], url=r["url"])
             for r in rows
         ]
 
@@ -219,4 +272,5 @@ def _expand(paths: list[Path]) -> list[Path]:
 
 def _source_row(r: sqlite3.Row) -> SourceRow:
     return SourceRow(id=r["id"], path=r["path"], title=r["title"], date=r["date"], added_at=r["added_at"],
-                     excluded=bool(r["excluded"]), chunks=r["n"], sha256=r["sha256"])
+                     excluded=bool(r["excluded"]), chunks=r["n"], sha256=r["sha256"], authorship=r["authorship"],
+                     origin=r["origin"], ownership_proof=r["ownership_proof"], url=r["url"])

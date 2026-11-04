@@ -75,3 +75,10 @@ def test_garbage_inputs():
     for raw in (None, "text", 5, [], [1, "x", {"kind": "rant", "text": "x"}, {"kind": "quote", "text": "  "}]):
         out, _ = validate_segments(raw, EV)
         assert len(out) == 1 and out[0].kind == "no_evidence"
+
+
+def test_quote_from_ai_assisted_source_is_demoted():
+    ev = {"E1": Evidence("c9", "s9", "Draft", None, "p", "We put customers first in every decision we make.",
+                         authorship="ai_assisted")}
+    out, rep = validate_segments([seg("quote", "We put customers first in every decision", ["E1"])], ev)
+    assert out[0].kind == "extrapolation" and "AI-assisted" in out[0].note and rep.quotes_demoted == 1
