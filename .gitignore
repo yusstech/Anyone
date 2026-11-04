@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Secrets — never commit
+.env
+.env.*
+
+# Per-persona derived data (index, sessions). Owners' corpora stay out of the repo.
+.citeself/
+revocation-receipt*.json
+
+.DS_Store

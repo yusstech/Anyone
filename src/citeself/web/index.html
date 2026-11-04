@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CiteSelf</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <div class="who">
+      <div class="avatar" aria-hidden="true">AI</div>
+      <div>
+        <h1 id="name">Loading…</h1>
+        <p id="bio" class="muted"></p>
+      </div>
+    </div>
+    <button id="reset" type="button" class="ghost">New conversation</button>
+  </header>
+  <div class="disclosure" role="note"><strong>AI simulation.</strong> <span id="disclosure"></span></div>
+
+  <main class="layout">
+    <section class="chat" aria-label="Conversation">
+      <ol id="log" class="log" aria-live="polite">
+        <li class="intro muted">
+          Ask about anything this person has written about. Answers separate
+          <span class="pill pill-quote">verbatim quotes</span>,
+          <span class="pill pill-ext">extrapolation</span> and
+          <span class="pill pill-none">no evidence</span>.
+        </li>
+      </ol>
+      <form id="ask" class="composer" autocomplete="off">
+        <label for="q" class="sr-only">Your question</label>
+        <textarea id="q" rows="2" maxlength="2000" placeholder="Ask a question…" required></textarea>
+        <button id="send" type="submit">Ask</button>
+      </form>
+    </section>
+
+    <aside class="evidence" aria-label="Sources">
+      <h2>Sources</h2>
+      <p id="evidence-empty" class="muted">Click a citation to see exactly where it comes from.</p>
+      <div id="evidence-list"></div>
+    </aside>
+  </main>
+
+  <footer class="foot muted">
+    Powered by <a href="https://github.com/yusstech/PersonaLab" rel="noopener noreferrer" target="_blank">CiteSelf</a>.
+    Quotes are machine-checked against the source text. Conversations are not stored.
+  </footer>
+</body>
+</html>
