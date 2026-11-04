@@ -113,6 +113,25 @@ citeself revoke                  # delete the whole index and write a revocation
 
 Re-ingesting an edited file replaces the old version. Everything CiteSelf derives lives in `.citeself/` next to `persona.yaml`; your original files are never modified. Conversations are not stored anywhere.
 
+## Measure how well it matches you
+
+A convincing answer isn't the same as a faithful one, so CiteSelf ships with an evaluation:
+
+```bash
+citeself eval init     # creates eval.yaml: write questions AND your own answers, before looking at any AI output
+citeself eval run      # asks every question three ways, then judges each answer against yours
+citeself eval score .citeself/eval/<run>   # after you blind-rate rating_sheet.csv yourself
+```
+
+Three arms answer each question: **citeself** (the full pipeline), **bio_only** (a generic model given your name and bio) and **generic** (name only). The report shows:
+
+- **Alignment** with your own answers (1–5, scored by a judge model that isn't told which arm wrote what) and **contradiction rate**
+- **Normalized score:** if you re-answer questions a week later (`my_answer_retest`), your own consistency becomes the ceiling, following [Park et al. 2024](https://arxiv.org/abs/2411.10109)
+- **Grounding:** share of proposed quotes that were verbatim, and whether it says "no evidence" on questions your material doesn't cover (and only those)
+- A **blind rating sheet** with shuffled, unlabeled answers for you to score. Your ratings are the strongest signal; the judge is an LLM and can be wrong.
+
+Write answers in your own words rather than copying from your material, and include questions your writing doesn't cover. Otherwise the test is circular. Everything stays in `.citeself/eval/` on your machine.
+
 ## How it works
 
 1. **Ingest:** files are extracted, cleaned, redacted and split into chunks that keep their exact offsets in the source. They are stored in one local SQLite file with full-text search.
@@ -123,7 +142,7 @@ Re-ingesting an edited file replaces the old version. Everything CiteSelf derive
 ## Honest limits
 
 - **Verbatim ≠ in context.** CiteSelf proves a quote exists in your material. It cannot prove the quote is being used the way you meant it.
-- **Extrapolation is inference.** It is labeled and cited, but whether it's a *fair* reading of your views is a judgment call. A fidelity evaluation (`citeself eval`, coming next) will measure this against your own answers.
+- **Extrapolation is inference.** It is labeled and cited, but whether it's a *fair* reading of your views is a judgment call. `citeself eval` measures this against your own answers. No results from real people have been published yet.
 - **Retrieval is keyword-based** in v0.1, so it can miss passages that use different words. Embedding search is on the roadmap.
 - **Self-attestation is not identity verification.** `persona.yaml` records your consent; it can't prove you are who you say. Anyone hosting CiteSelf publicly must add their own verification.
 - **`citeself serve` has no authentication.** It binds to `127.0.0.1` by default. Don't expose it to a network as is.
@@ -131,7 +150,7 @@ Re-ingesting an edited file replaces the old version. Everything CiteSelf derive
 
 ## Roadmap
 
-- `citeself eval`: measure fidelity against your own held-out answers, compared with generic-AI and bio-only baselines
+- Publish evaluation results from consenting real users
 - Embedding and hybrid retrieval
 - Export as an Agent Skill; Docker image for a hosted "ask me" page
 - Track how your views change over time

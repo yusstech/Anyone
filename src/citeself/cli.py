@@ -177,6 +177,56 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_eval_init(args) -> int:
+    from .evaluate import init_eval
+
+    path = init_eval(_root(args))
+    print(f"Created {path}. Write your own answers BEFORE looking at any AI output, then: citeself eval run")
+    return 0
+
+
+def cmd_eval_run(args) -> int:
+    from .evaluate import ARMS, load_eval_set, planned_calls, run_eval, write_outputs
+    from .providers import AnthropicProvider
+
+    root = _root(args)
+    items = load_eval_set(root)
+    if args.limit:
+        items = items[: args.limit]
+    arms = args.arms.split(",") if args.arms else list(ARMS)
+    persona = Persona(root, provider_override=args.provider)
+    try:
+        calls = planned_calls(items, arms, not args.no_judge)
+        print(f"{len(items)} questions x {len(arms)} arms{' + judge' if not args.no_judge else ''}: "
+              f"up to {calls} model calls with {persona.manifest.model.name}.", flush=True)
+        if not args.yes and input("Run now? This uses your API credits. [y/N] ").strip().lower() not in ("y", "yes"):
+            print("Aborted.")
+            return 1
+        llm = AnthropicProvider(persona.manifest.model)
+        run = run_eval(persona, llm, items, arms, use_judge=not args.no_judge,
+                       progress=lambda n, total, iid: print(f"  [{n}/{total}] {iid}", file=sys.stderr))
+    finally:
+        persona.close()
+    out = write_outputs(root, run)
+    print((out / "report.md").read_text(encoding="utf-8"))
+    print(f"Saved to {out}\nFor the strongest signal, rate {out / 'rating_sheet.csv'} yourself (don't open rating_key.json),"
+          f" then: citeself eval score {out}")
+    return 0
+
+
+def cmd_eval_score(args) -> int:
+    from .evaluate import score_ratings
+
+    result = score_ratings(Path(args.run_dir))
+    if not result["arms"]:
+        print("No ratings found. Fill in the rating_1_to_5 column first.")
+        return 1
+    print(f"Blind ratings across {result['items_compared']} questions:")
+    for arm, r in result["arms"].items():
+        print(f"  {arm:9} mean {r['mean_rating']}  win rate {r['win_rate']}  ({r['ratings']} ratings)")
+    return 0
+
+
 def cmd_mcp(args) -> int:
     try:
         from .mcp_server import run
@@ -228,6 +278,20 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("mcp", help="serve this persona to AI agents over MCP (stdio)")
     s.add_argument("--provider", choices=["anthropic", "extractive"], help="override model.provider")
     s.set_defaults(func=cmd_mcp)
+
+    ev = sub.add_parser("eval", help="measure how well the simulation matches your own answers")
+    evsub = ev.add_subparsers(dest="eval_command", required=True)
+    evsub.add_parser("init", help="create eval.yaml for your questions and answers").set_defaults(func=cmd_eval_init)
+    s = evsub.add_parser("run", help="run all arms, judge them, write a report and a blind rating sheet")
+    s.add_argument("--arms", help="comma-separated subset of: citeself,bio_only,generic")
+    s.add_argument("--no-judge", action="store_true", help="skip LLM judging (blind sheet only)")
+    s.add_argument("--limit", type=int, help="only the first N questions")
+    s.add_argument("--yes", action="store_true", help="skip the cost confirmation")
+    s.add_argument("--provider", choices=["anthropic", "extractive"], help="override provider for the citeself arm")
+    s.set_defaults(func=cmd_eval_run)
+    s = evsub.add_parser("score", help="score your filled-in blind rating sheet")
+    s.add_argument("run_dir")
+    s.set_defaults(func=cmd_eval_score)
 
     s = sub.add_parser("revoke", help="delete the index and write a revocation receipt")
     s.add_argument("--yes", action="store_true", help="skip confirmation")

@@ -59,6 +59,15 @@ class GenerationResult:
     refusal_category: str | None = None
 
 
+@dataclass
+class Completion:
+    text: str
+    data: object
+    model: str
+    usage: dict = field(default_factory=dict)
+    refused: bool = False
+
+
 class Provider(Protocol):
     name: str
 
@@ -86,26 +95,14 @@ class AnthropicProvider:
             self._client = anthropic.Anthropic()  # credentials from env / `ant auth login` profile
         return self._client
 
-    def generate(self, request: GenerationRequest) -> GenerationResult:
+    def _create(self, **kwargs):
+        """Single place that talks to the API and maps errors to safe, actionable messages."""
         import anthropic
 
-        kwargs = dict(
-            model=self.settings.name,
-            max_tokens=self.max_tokens,
-            system=request.system,
-            messages=request.messages,
-            output_config={
-                "effort": self.settings.effort,
-                "format": {"type": "json_schema", "schema": SEGMENTS_SCHEMA},
-            },
-            # No prompt caching: every request ends in a unique evidence+question block and the
-            # system prompt is below the minimum cacheable size, so cache writes would never be read.
-        )
         try:
             if self.settings.refusal_fallback:
-                response = self.client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kwargs)
-            else:
-                response = self.client.messages.create(**kwargs)
+                return self.client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kwargs)
+            return self.client.messages.create(**kwargs)
         except anthropic.AuthenticationError as exc:
             raise ProviderError("Anthropic rejected the credentials. Set ANTHROPIC_API_KEY (or run `ant auth login`).") from exc
         except anthropic.PermissionDeniedError as exc:
@@ -126,6 +123,40 @@ class AnthropicProvider:
                                     "or try offline mode with --provider extractive.") from exc
             raise ProviderError(f"Anthropic client error: {type(exc).__name__}") from exc
 
+    def complete(self, system: str, user: str, schema: dict | None = None) -> Completion:
+        """Plain single-turn completion (used by baselines and the eval judge)."""
+        output_config: dict = {"effort": self.settings.effort}
+        if schema is not None:
+            output_config["format"] = {"type": "json_schema", "schema": schema}
+        response = self._create(model=self.settings.name, max_tokens=self.max_tokens, system=system,
+                                messages=[{"role": "user", "content": user}], output_config=output_config)
+        usage = _usage_dict(getattr(response, "usage", None))
+        if response.stop_reason == "refusal":
+            return Completion(text="", data=None, model=response.model, usage=usage, refused=True)
+        if response.stop_reason == "max_tokens":
+            raise MalformedOutput("The model ran out of output tokens before finishing.")
+        text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), "")
+        data = None
+        if schema is not None:
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as exc:
+                raise MalformedOutput("The model returned invalid JSON.") from exc
+        return Completion(text=text, data=data, model=response.model, usage=usage)
+
+    def generate(self, request: GenerationRequest) -> GenerationResult:
+        # No prompt caching: every request ends in a unique evidence+question block and the
+        # system prompt is below the minimum cacheable size, so cache writes would never be read.
+        response = self._create(
+            model=self.settings.name,
+            max_tokens=self.max_tokens,
+            system=request.system,
+            messages=request.messages,
+            output_config={
+                "effort": self.settings.effort,
+                "format": {"type": "json_schema", "schema": SEGMENTS_SCHEMA},
+            },
+        )
         usage = _usage_dict(getattr(response, "usage", None))
         if response.stop_reason == "refusal":
             details = getattr(response, "stop_details", None)
