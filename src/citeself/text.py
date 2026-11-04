@@ -74,39 +74,123 @@ def markdown_to_text(md: str) -> str:
 
 
 class _HTMLText(HTMLParser):
-    BLOCK = {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section", "article", "blockquote"}
-    SKIP = {"script", "style", "noscript", "template", "svg"}
+    """Extracts readable text. If the page has a <main>, only its content is kept;
+    navigation, headers, footers and forms are always dropped as site chrome."""
+    BLOCK = {"p", "div", "br", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section", "article", "blockquote",
+             "main", "figcaption", "dd", "dt", "pre"}
+    SKIP = {"script", "style", "noscript", "template", "svg", "nav", "header", "footer", "aside", "form", "button",
+            "iframe", "select"}
+    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+    DATE_META = ("article:published_time", "datepublished", "date", "dc.date", "pubdate")
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
+        self.main_parts: list[str] = []
         self.title = ""
+        self.date: str | None = None
         self._skip = 0
+        self._main = 0
+        self._saw_main = False
         self._in_title = False
 
+    def _emit(self, text: str) -> None:
+        self.parts.append(text)
+        if self._main:
+            self.main_parts.append(text)
+
     def handle_starttag(self, tag, attrs):
+        if tag == "meta":
+            a = {k.lower(): (v or "") for k, v in attrs}
+            key = (a.get("property") or a.get("name") or a.get("itemprop") or "").lower()
+            if key in self.DATE_META and a.get("content") and not self.date:
+                self.date = a["content"].strip()[:10]
+            return
+        if tag in self.VOID:
+            if tag == "br":
+                self._emit("\n")
+            return
         if tag in self.SKIP:
             self._skip += 1
         elif tag == "title":
             self._in_title = True
-        elif tag in self.BLOCK:
-            self.parts.append("\n\n")
+        elif tag == "main":
+            self._main += 1
+            self._saw_main = True
+        if tag in self.BLOCK and not self._skip:
+            self._emit("\n\n")
 
     def handle_endtag(self, tag):
-        if tag in self.SKIP and self._skip:
-            self._skip -= 1
+        if tag in self.SKIP:
+            self._skip = max(0, self._skip - 1)
         elif tag == "title":
             self._in_title = False
-        elif tag in self.BLOCK:
-            self.parts.append("\n\n")
+        elif tag == "main":
+            self._main = max(0, self._main - 1)
+        if tag in self.BLOCK and not self._skip:
+            self._emit("\n\n")
 
     def handle_data(self, data):
-        if self._skip:
-            return
         if self._in_title:
             self.title += data
-        else:
-            self.parts.append(data)
+        elif not self._skip:
+            self._emit(data)
+
+    @property
+    def text(self) -> str:
+        return "".join(self.main_parts if self._saw_main and "".join(self.main_parts).strip() else self.parts)
+
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MAX_DOCX_XML = 50 * 1024 * 1024
+
+
+def _docx(path: Path) -> "Extracted":
+    import zipfile
+    import xml.etree.ElementTree as ET
+
+    try:
+        zf = zipfile.ZipFile(path)
+    except zipfile.BadZipFile as exc:
+        raise ValueError("not a valid .docx file") from exc
+    with zf:
+        def read(name: str) -> bytes | None:
+            try:
+                info = zf.getinfo(name)
+            except KeyError:
+                return None
+            if info.file_size > _MAX_DOCX_XML:
+                raise ValueError(f"{name} inside the .docx is too large")
+            data = zf.read(name)
+            if b"<!DOCTYPE" in data[:2048].upper():  # Word never emits DTDs; refuse entity tricks
+                raise ValueError("unexpected DTD in .docx")
+            return data
+
+        body = read("word/document.xml")
+        if body is None:
+            raise ValueError("not a Word document (word/document.xml missing)")
+        paras: list[str] = []
+        for p in ET.fromstring(body).iter(f"{_W}p"):
+            buf: list[str] = []
+            for node in p.iter():
+                if node.tag == f"{_W}t" and node.text:
+                    buf.append(node.text)
+                elif node.tag == f"{_W}tab":
+                    buf.append("\t")
+                elif node.tag in (f"{_W}br", f"{_W}cr"):
+                    buf.append("\n")
+            paras.append("".join(buf))
+        title, date = "", None
+        core = read("docProps/core.xml")
+        if core is not None:
+            root = ET.fromstring(core)
+            for el in root:
+                tag = el.tag.rsplit("}", 1)[-1]
+                if tag == "title" and el.text:
+                    title = el.text.strip()
+                elif tag == "created" and el.text and not date:
+                    date = el.text.strip()[:10]
+    return Extracted(text="\n\n".join(paras), title=title or path.stem, date=date)
 
 
 @dataclass
@@ -116,7 +200,7 @@ class Extracted:
     date: str | None
 
 
-SUPPORTED_SUFFIXES = {".md", ".markdown", ".txt", ".html", ".htm", ".pdf"}
+SUPPORTED_SUFFIXES = {".md", ".markdown", ".txt", ".html", ".htm", ".pdf", ".docx"}
 
 
 def extract(path: Path) -> Extracted:
@@ -133,11 +217,15 @@ def extract(path: Path) -> Extracted:
         title = (reader.metadata.title if reader.metadata and reader.metadata.title else "") or path.stem
         return Extracted(text=text, title=title.strip(), date=None)
 
+    if suffix == ".docx":
+        return _docx(path)
+
     raw = path.read_text(encoding="utf-8", errors="replace")
     if suffix in (".html", ".htm"):
         parser = _HTMLText()
         parser.feed(raw)
-        return Extracted(text="".join(parser.parts), title=parser.title.strip() or path.stem, date=None)
+        parser.close()
+        return Extracted(text=parser.text, title=" ".join(parser.title.split()) or path.stem, date=parser.date)
 
     meta, body = parse_front_matter(raw)
     title = str(meta.get("title") or "").strip()

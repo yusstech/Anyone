@@ -70,7 +70,7 @@ def test_search_is_safe_against_fts_syntax(persona_dir):
 
 
 def test_unsupported_file_reports_error(tmp_path):
-    bad = tmp_path / "x.docx"
+    bad = tmp_path / "x.pages"
     bad.write_text("x")
     with Store(tmp_path / "db.sqlite") as store:
         res = store.ingest_paths([bad])
@@ -89,3 +89,66 @@ def test_reingesting_changed_file_replaces_old_version(persona_dir):
         texts = [r[0] for r in store.conn.execute("SELECT text FROM sources")]
         assert not any("Jordan" in t for t in texts) and any("Edited later." in t for t in texts)
         assert store.conn.execute("SELECT COUNT(*) FROM chunks_fts").fetchone()[0] == store.stats()["chunks"]
+
+
+def test_html_keeps_main_drops_chrome_and_reads_date(tmp_path):
+    from citeself.text import extract
+
+    page = tmp_path / "post.html"
+    page.write_text(
+        '<html><head><title>My Post — Site</title><meta property="article:published_time" content="2026-08-27T10:00:00Z"/>'
+        '</head><body><header><nav>Home Writing Contact</nav></header>'
+        '<main><article><h1>My Post</h1><p>Real words here.<br>Second line.</p><form><button>Subscribe</button></form>'
+        '</article></main><footer>(c) 2026 Footer text</footer></body></html>')
+    ex = extract(page)
+    assert "Real words here." in ex.text and "Second line." in ex.text
+    assert "Home Writing" not in ex.text and "Footer text" not in ex.text and "Subscribe" not in ex.text
+    assert ex.date == "2026-08-27" and ex.title == "My Post — Site"
+
+
+def test_html_without_main_falls_back_to_body(tmp_path):
+    from citeself.text import extract
+
+    page = tmp_path / "plain.html"
+    page.write_text("<html><body><nav>menu</nav><p>Only paragraph.</p></body></html>")
+    ex = extract(page)
+    assert "Only paragraph." in ex.text and "menu" not in ex.text
+
+
+def _make_docx(path, paragraphs, title="Voice guide", created="2026-05-01T09:00:00Z", extra=b""):
+    import zipfile
+
+    w = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    body = "".join(f"<w:p><w:r><w:t>{t}</w:t></w:r></w:p>" for t in paragraphs)
+    doc = f'<?xml version="1.0"?>{extra.decode()}<w:document xmlns:w="{w}"><w:body>{body}</w:body></w:document>'
+    core = ('<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" '
+            'xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/">'
+            f"<dc:title>{title}</dc:title><dcterms:created>{created}</dcterms:created></cp:coreProperties>")
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", doc)
+        z.writestr("docProps/core.xml", core)
+
+
+def test_docx_extraction(tmp_path):
+    from citeself.text import extract
+
+    f = tmp_path / "guide.docx"
+    _make_docx(f, ["Write plainly.", "Lead with the customer problem."])
+    ex = extract(f)
+    assert ex.text == "Write plainly.\n\nLead with the customer problem."
+    assert ex.title == "Voice guide" and ex.date == "2026-05-01"
+
+
+def test_docx_rejects_dtd_and_garbage(tmp_path):
+    import pytest
+
+    from citeself.text import extract
+
+    bad = tmp_path / "bomb.docx"
+    _make_docx(bad, ["x"], extra=b'<!DOCTYPE lolz [<!ENTITY lol "lol">]>')
+    with pytest.raises(ValueError, match="DTD"):
+        extract(bad)
+    junk = tmp_path / "junk.docx"
+    junk.write_bytes(b"not a zip")
+    with pytest.raises(ValueError, match="valid .docx"):
+        extract(junk)
