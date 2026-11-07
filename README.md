@@ -2,15 +2,27 @@
 
 **Simulate anyone from public sources. Every quote is real.**
 
-Anyone builds an AI simulation of a person (a public figure, a private professional you're about to meet, or yourself) from text that person actually published. Unlike other "AI clone" tools, it never puts words in their mouth:
+Anyone builds an AI simulation of a person (a public figure, a private professional you're about to meet, or yourself) from text that person actually published. Most "AI clone" tools generate in someone's voice. Anyone only shows their words when it can prove they said them:
 
-- **Verbatim quotes** are shown as the person's words only after Anyone checks, character by character, that they appear in a source Anyone fetched itself.
+- **Verbatim quotes** are shown as the person's words only after Anyone checks that the exact words (ignoring only typographic differences like curly quotes) appear in a source Anyone fetched itself.
 - **Extrapolation** is labeled as inference, written in the third person, and must cite the passages it relies on.
 - **No evidence** is a first-class answer. If the person never said anything on the topic, the simulation says so instead of guessing.
 
 The model *proposes*; the validator *decides*. A quote that doesn't match the source word for word is relabeled as extrapolation before anyone sees it. A citation the model invented is stripped. An inference with no supporting source is removed.
 
 > Status: early alpha (v0.1.0.dev0), renamed from CiteSelf. Works locally with Claude. APIs and file formats may change.
+
+## Why I built this
+
+I read a newsletter, and I honestly can't remember whose, where someone described building an AI simulation of their boss. They wanted to rehearse before submitting a proposal. It worked up to a point: the answers sounded reasonable. But they didn't capture how the boss would actually respond, because the AI only carried what was in the data. It didn't know their mood that day, their state of mind, or what else was weighing on them.
+
+That stuck with me. Preparing for a conversation with a specific person is useful: a manager, a client, an investor, a customer you're trying to understand. But a simulation that fills the gaps with confident guesses is worse than none, because you walk in prepared for the wrong person.
+
+So Anyone is built around the gap. It only quotes what the person actually said, labels everything else as inference, and says "no evidence" when the record is silent. It can't tell you someone's mood. It can tell you exactly where its knowledge ends.
+
+I'm also building it to test my own thinking about AI products: where the model should be trusted, where code should decide, and how you'd know if it's working.
+
+— Yusuf Muhammed ([@yusstech](https://github.com/yusstech))
 
 ## Who you can simulate
 
@@ -26,7 +38,7 @@ For every kind:
 
 - **The disclosure is on every answer:** "AI simulation of X based on public sources; X has not endorsed this."
 - **Personal data is redacted when material is added.** Email addresses, phone numbers and street addresses are replaced before anything is stored, indexed or sent to a model. This can't be turned off for `public_figure` or `private_individual`.
-- **Data stays on your machine.** It lives in one SQLite file next to `persona.yaml`. Conversations are not stored.
+- **Your index stays on your machine.** It lives in one SQLite file next to `persona.yaml`. Anyone doesn't save conversations, but with a model provider such as Anthropic, each question and the retrieved passages are sent to that provider's API.
 
 Anyone is text-only. It does not clone voices or faces, and it does not format output to look like real posts.
 
@@ -101,7 +113,7 @@ subject:
   bio: One line shown to visitors.
 # consent:                       # only for kind: self (your self-attestation); rejected for other kinds
 boundaries:
-  blocked_keywords: [salary]            # hard block: never sent to the model
+  blocked_keywords: [salary]            # questions containing these are refused before any model call
   blocked_topics: [politics]            # model is told to decline these (private_individual adds five more)
   allow_extrapolation: true             # false = quotes and "no evidence" only
 privacy:
@@ -201,6 +213,12 @@ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 The test persona, Avery Moreno, is entirely fictional.
 
+## How this was built
+
+I designed it and made the product and trust decisions. The code was written with Claude (Anthropic) as an AI pair programmer under my direction, and the commits are co-authored. The offline test suite covers every change.
+
+Questions and feedback: [GitHub Issues](https://github.com/yusstech/PersonaLab/issues) or [@yusstech](https://github.com/yusstech).
+
 ## License
 
-Apache-2.0
+Apache-2.0 © 2026 Yusuf Muhammed

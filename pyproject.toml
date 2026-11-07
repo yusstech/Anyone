@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-authors = [{ name = "Anyone contributors" }]
+authors = [{ name = "Yusuf Muhammed" }]
 keywords = ["ai", "persona", "simulation", "rag", "citations", "digital-twin", "llm", "claude"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
