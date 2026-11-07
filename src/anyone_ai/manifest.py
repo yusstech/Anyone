@@ -80,6 +80,45 @@ class Privacy(_Strict):
     redact_pii: bool = True
 
 
+_HANDLE = r"^[A-Za-z0-9_]{1,15}$"
+
+
+class Research(_Strict):
+    """Inputs for `anyone new` / `anyone deepen`. Only meaningful for third-party kinds."""
+    # Reference links from the user (their site, X profile, a talk page). Pages on these hosts
+    # count as the subject's own words; an x.com/<handle> link confirms that handle.
+    links: list[str] = Field(default_factory=list)
+    # Disambiguation, e.g. "CEO of Acme, Lagos". Sent to the search model, never quoted.
+    hint: str = Field(default="", max_length=500)
+    # Confirmed X accounts: posts by these handles count as the subject's own words.
+    x_handles: list[str] = Field(default_factory=list)
+
+    @field_validator("links")
+    @classmethod
+    def _links(cls, v: list[str]) -> list[str]:
+        out = []
+        for link in (s.strip() for s in v):
+            if not link:
+                continue
+            if not link.lower().startswith(("http://", "https://")):
+                link = "https://" + link
+            out.append(link)
+        return out
+
+    @field_validator("x_handles")
+    @classmethod
+    def _handles(cls, v: list[str]) -> list[str]:
+        import re
+
+        out: list[str] = []
+        for h in (s.strip().lstrip("@") for s in v):
+            if not re.match(_HANDLE, h):
+                raise ValueError(f"not a valid X handle: {h!r}")
+            if h.lower() not in {o.lower() for o in out}:
+                out.append(h)
+        return out
+
+
 class ModelSettings(_Strict):
     provider: Literal["anthropic", "extractive"] = "anthropic"
     name: str = DEFAULT_MODEL
@@ -98,6 +137,7 @@ class Manifest(_Strict):
     consent: Consent | None = None
     boundaries: Boundaries = Field(default_factory=Boundaries)
     privacy: Privacy = Field(default_factory=Privacy)
+    research: Research = Field(default_factory=Research)
     model: ModelSettings = Field(default_factory=ModelSettings)
     retrieval: RetrievalSettings = Field(default_factory=RetrievalSettings)
 
@@ -171,6 +211,20 @@ def _upgrade(data: dict) -> dict:
     return {"anyone": 2, "subject": {"kind": "self", **persona}, **data}
 
 
+def save_research(root: Path, research: Research) -> None:
+    """Update only the research block of persona.yaml, keeping the user's other edits and comments
+    above the YAML body."""
+    path = root / MANIFEST_NAME
+    raw = path.read_text(encoding="utf-8")
+    import itertools
+
+    header = "".join(itertools.takewhile(lambda line: line.startswith("#"), raw.splitlines(keepends=True)))
+    data = yaml.safe_load(raw) or {}
+    data["research"] = research.model_dump()
+    Manifest.model_validate(_upgrade(data))
+    path.write_text(header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+
+
 def load_manifest(root: Path) -> Manifest:
     path = root / MANIFEST_NAME
     if not path.exists():
@@ -218,7 +272,7 @@ _HEADERS = {
 }
 
 
-def write_new_manifest(root: Path, name: str, kind: str = "self") -> Path:
+def write_new_manifest(root: Path, name: str, kind: str = "self", research: Research | None = None) -> Path:
     path = root / MANIFEST_NAME
     if path.exists():
         raise ManifestError(f"{path} already exists")
@@ -233,7 +287,7 @@ def write_new_manifest(root: Path, name: str, kind: str = "self") -> Path:
             statement=(f"I am {name}. I am creating an AI simulation of myself from material I wrote or "
                        "have the right to use, and I can revoke it at any time."),
         )
-    manifest = Manifest(subject=Subject(kind=kind, name=name), consent=consent)
+    manifest = Manifest(subject=Subject(kind=kind, name=name), consent=consent, research=research or Research())
     header = _HEADERS[kind] + "# Docs: https://github.com/yusstech/PersonaLab\n"
     body = yaml.safe_dump(manifest.model_dump(exclude_none=True), sort_keys=False, allow_unicode=True)
     path.write_text(header + body, encoding="utf-8")

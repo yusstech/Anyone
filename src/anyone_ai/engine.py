@@ -8,7 +8,7 @@ from pathlib import Path
 from .manifest import Manifest, index_path, load_manifest
 from .providers import GenerationRequest, MalformedOutput, Provider, make_provider
 from .store import Evidence, Store
-from .validate import Segment, ValidationReport, validate_segments
+from .validate import Segment, ValidationReport, outlet_label, validate_segments
 
 MAX_QUESTION_CHARS = 2000
 
@@ -80,6 +80,9 @@ def build_system_prompt(m: Manifest) -> str:
         "evidence passage. No ellipses, no edits, no stitching. Put that passage's ID in evidence_ids. "
         "Quotes are the most trustworthy thing you can offer, so lead with them. Never quote a passage marked "
         f'authorship="ai_assisted": {n} did not write it word for word; use it only as context for extrapolation.',
+        f'  A passage marked authorship="secondhand" is reporting by someone else. From it, quote only words the '
+        f"passage itself puts in quotation marks and attributes to {n}, without the quotation marks; everything else "
+        "in it is the outlet's wording, usable only for extrapolation.",
     ]
     if m.boundaries.allow_extrapolation:
         lines.append(
@@ -120,7 +123,12 @@ def _evidence_block(evidence: dict[str, Evidence]) -> str:
     parts = ["<evidence>"]
     for label, e in evidence.items():
         title = _neutralize(e.title).replace('"', "'")
-        who = "" if e.quotable else ' authorship="ai_assisted"'
+        if e.quotable:
+            who = ""
+        elif e.authorship == "secondhand":
+            who = f' authorship="secondhand" outlet="{_neutralize(outlet_label(e)).replace(chr(34), chr(39))}"'
+        else:
+            who = ' authorship="ai_assisted"'
         parts.append(f'<source id="{label}" title="{title}" date="{e.date or "unknown"}"{who}>\n{_neutralize(e.text)}\n</source>')
     parts.append("</evidence>")
     return "\n".join(parts)
@@ -186,6 +194,7 @@ class Persona:
             result.segments, evidence,
             min_quote_words=self.manifest.retrieval.min_quote_words,
             allow_extrapolation=self.manifest.boundaries.allow_extrapolation,
+            subject_name=self.manifest.subject.name,
         )
         status = "no_evidence" if all(s.kind == "no_evidence" for s in segments) else "ok"
         return self._answer(question, segments, status, evidence=evidence, model=result.model,

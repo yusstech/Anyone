@@ -82,3 +82,15 @@ def test_quote_from_ai_assisted_source_is_demoted():
                          authorship="ai_assisted")}
     out, rep = validate_segments([seg("quote", "We put customers first in every decision", ["E1"])], ev)
     assert out[0].kind == "extrapolation" and "AI-assisted" in out[0].note and rep.quotes_demoted == 1
+
+
+def test_reported_quote_attribution_clause():
+    from anyone_ai.text import normalize
+    from anyone_ai.validate import reported_quote
+
+    src = normalize('Asked about hiring, Dana Reyes said: “Hire slowly and explain every no.” She left early. '
+                    '“Remote work is a tax on juniors,” she added.')
+    assert reported_quote("Hire slowly and explain every no.", src, "Dana Reyes")       # name before the quote
+    assert not reported_quote("Remote work is a tax on juniors,", src, "Dana Reyes")    # pronoun only: not accepted
+    assert not reported_quote("She left early", src, "Dana Reyes")                       # not inside quotation marks
+    assert not reported_quote("Hire slowly", src, "")                                    # no name, no attribution

@@ -38,7 +38,7 @@ For every kind:
 
 - **The disclosure is on every answer:** "AI simulation of X based on public sources; X has not endorsed this."
 - **Personal data is redacted when material is added.** Email addresses, phone numbers and street addresses are replaced before anything is stored, indexed or sent to a model. This can't be turned off for `public_figure` or `private_individual`.
-- **Your index stays on your machine.** It lives in one SQLite file next to `persona.yaml`. Anyone doesn't save conversations, but with a model provider such as Anthropic, each question and the retrieved passages are sent to that provider's API.
+- **Your index stays on your machine.** It lives in one SQLite file next to `persona.yaml`. Anyone doesn't save conversations, but with a model provider such as Anthropic, each question and the retrieved passages are sent to that provider's API. Research (`anyone new`, `anyone deepen`) also sends the name, your hint and your links to the provider's web search.
 
 Anyone is text-only. It does not clone voices or faces, and it does not format output to look like real posts.
 
@@ -49,17 +49,14 @@ Requires Python 3.10+.
 ```bash
 pip install "anyone-ai[pdf,mcp] @ git+https://github.com/yusstech/PersonaLab"
 
-# Someone else
-anyone -C dana init --name "Dana Reyes" --kind public_figure
-anyone -C dana add danareyes.com --authorship by_me     # their own site: feed/sitemap, respects robots.txt
-anyone -C dana ask "How does Dana think about pricing?" --provider extractive   # offline, no API key
+# Someone else: Anyone researches them (needs an API key, below)
+anyone new "Paul Graham" --link paulgraham.com --x-handle paulg --hint "essayist, Y Combinator co-founder"
+anyone -C paul-graham ask "Should founders do things that don't scale?"
 
 # Yourself
 anyone -C me init --name "Your Name"                     # kind: self; asks you to self-attest
 anyone -C me add ~/writing/                              # files/folders: .md .txt .html .pdf .docx
 ```
-
-Coming next: `anyone new "Name" --link ...`, where the model *finds* public sources (sites, articles, X posts) and Anyone fetches the text itself. Until then, add sources with `anyone add`.
 
 For real answers, Anyone uses Claude with **your own API key**. Keys are read from the environment and never written to disk, logs or `persona.yaml`:
 
@@ -68,9 +65,9 @@ export ANTHROPIC_API_KEY=...               # or, on macOS, keep it in Keychain:
 # security add-generic-password -a "$USER" -s anyone-anthropic -w
 # export ANTHROPIC_API_KEY="$(security find-generic-password -a "$USER" -s anyone-anthropic -w)"
 
-anyone -C dana ask "How does Dana think about pricing?"
-anyone -C dana chat                        # multi-turn, in the terminal
-anyone -C dana serve                       # web chat with a source panel at http://127.0.0.1:8765
+anyone -C paul-graham chat                 # multi-turn, in the terminal
+anyone -C paul-graham serve                # web chat with a source panel at http://127.0.0.1:8765
+anyone -C paul-graham ask "..." --provider extractive   # offline: closest verbatim passages, no API key
 ```
 
 Example answer:
@@ -86,6 +83,28 @@ AI simulation of Avery Moreno based on public sources; Avery Moreno has not endo
   Sources:
    E1  Talk on shipping and quality (2026-03-21)  · src-8f945b0577
 ```
+
+## Research someone
+
+`anyone new "<name>"` builds a persona from public sources in four steps:
+
+1. **Discover.** Claude's built-in web search looks for their own writing, interviews, talks and X posts. A URL is kept only if a real search result contained it, so the model can't invent sources.
+2. **Collect.** Anyone fetches every text itself and never uses a model's summary as quotable text. X posts come from X's public oEmbed endpoint, which returns the exact post, author and date. Pages come from a robots.txt-respecting fetcher. Archive pages on a site you linked are followed, up to 50 pages a run. People-search sites and private network addresses are never fetched.
+3. **Classify.** This decides what counts as the person's own words, and the model's opinion alone never does:
+   - **X posts** count only when oEmbed names a *confirmed* account as the author. Accounts are confirmed by your `--x-handle`, your x.com link, or your answer when the model proposes one. Posts by anyone else are skipped.
+   - **Pages on a site you linked** count as theirs.
+   - **Every other page** is `secondhand` reporting.
+4. **Review.** You see the dossier, grouped into their own words and reporting about them. Remove anything about the wrong person before you chat.
+
+| Option | Use |
+|---|---|
+| `--link URL` | Their site, x.com profile, a talk page (repeatable). The strongest signal of identity. |
+| `--hint TEXT` | Who they are, to tell namesakes apart: `"CEO of Acme, Lagos"` |
+| `--x-handle H` | Their X account (repeatable) |
+| `--kind private_individual` | Professional material only. The search is told so and people-search sites are blocked. |
+| `--max-searches N` | Default 8. Web search costs $10 per 1,000 searches, plus model tokens. A run is typically well under $1. |
+
+`anyone deepen "<topic>"` runs another targeted search for an existing persona. Re-running never stores the same text twice.
 
 ## Use it from any AI agent (MCP)
 
@@ -111,6 +130,10 @@ subject:
   kind: public_figure            # public_figure | private_individual | self
   name: Dana Reyes
   bio: One line shown to visitors.
+research:                        # written by `anyone new`; used again by `anyone deepen`
+  links: [https://danareyes.com]        # pages on these hosts count as their own words
+  hint: CEO of Acme, Lagos
+  x_handles: [danareyes]                # confirmed accounts: their posts count as their own words
 # consent:                       # only for kind: self (your self-attestation); rejected for other kinds
 boundaries:
   blocked_keywords: [salary]            # questions containing these are refused before any model call
@@ -143,9 +166,10 @@ CiteSelf manifests (`citeself: 1`) still load, as `kind: self`, and a `.citeself
 **Authorship decides what can be quoted.** Each import is marked:
 
 - `by_me`: written by the subject, word for word (you, in self mode). Can be quoted as their words.
-- `ai_assisted`: anything else, such as articles *about* them, ghostwritten or AI-drafted text. Used only as context and **never shown as their verbatim words**, even if the model tries.
+- `secondhand`: reporting about them by an outlet. A quote from it is verified only if the outlet itself puts those words in quotation marks *and* names the subject in the same attribution clause (`"...," Reyes said.`). It is shown as **"as reported by <outlet>"**. The outlet's own sentences, and remarks it attributes to other people, are never shown as the subject's words.
+- `ai_assisted`: ghostwritten or AI-drafted text. Used only as context and **never shown as their verbatim words**, even if the model tries.
 
-For other people, Anyone never assumes authorship. Pass `--authorship` or answer the prompt. Change it later with `anyone authorship <source-id> ai_assisted`.
+For other people, Anyone never assumes authorship. Pass `--authorship` or answer the prompt. Change it later with `anyone authorship <source-id> <by_me|secondhand|ai_assisted>`.
 
 ## Managing sources
 
@@ -191,17 +215,20 @@ Write answers in your own words rather than copying from your material, and incl
 - **Extrapolation is inference.** It is labeled and cited, but whether it's a *fair* reading is a judgment call.
 - **Redaction favours precision.** It catches common email, phone and street-address formats. It can miss addresses written house-number-last, obfuscated emails and unformatted digit runs. Review what you add.
 - **Retrieval is keyword-based** in v0.1, so it can miss passages that use different words.
+- **Research can pick up the wrong person** with a common name. Links and a hint help; the dossier review is where you catch it.
+- **Secondhand attribution is a heuristic.** Quotes attributed only by pronoun ("she said") are not shown as quotes, and a misattribution in the article itself would carry through. That is why such quotes are labeled with their outlet.
+- **Deleted X posts are not yet re-checked.** X's terms require dropping posts that are deleted or protected. Until `anyone sync` exists, re-run research or remove them by hand.
 - **Self-attestation is not identity verification.** For `kind: self`, `persona.yaml` records your consent; it can't prove you are who you say.
 - **`anyone serve` has no authentication.** It binds to `127.0.0.1` by default. Don't expose it to a network as is.
 - **You are responsible for how you use it.** Laws on AI likenesses, defamation, data protection and AI disclosure (e.g. EU AI Act Art. 50, GDPR) vary by place. Anyone discloses on every answer and limits what it collects; it can't make every use lawful.
 
 ## Roadmap
 
-1. **Research pipeline:** `anyone new "Name" --link ... --hint ...`. Your model's built-in search finds candidate sources. Anyone fetches the text itself (X posts via oEmbed, pages via the robots-respecting fetcher). Then a dossier you review before simulating.
-2. **More models:** Grok (xAI) and OpenAI adapters, chosen per persona. Bring your own keys (`XAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
-3. **Reply simulator:** `anyone reply "<post>"` gives a labeled, simulated reply, an engagement estimate and the verified quotes behind it.
-4. **Public bring-your-own-key web mode:** visitors use their own key, held in memory for the session only.
-5. **Backtest evaluation** for public figures.
+1. **More models:** Grok (xAI) and OpenAI adapters, chosen per persona. Bring your own keys (`XAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
+2. **Reply simulator:** `anyone reply "<post>"` gives a labeled, simulated reply, an engagement estimate and the verified quotes behind it.
+3. **Public bring-your-own-key web mode:** visitors use their own key, held in memory for the session only, and a web dossier review.
+4. **Backtest evaluation** for public figures.
+5. **`anyone sync`:** re-check stored X posts and drop deleted ones.
 
 ## Development
 

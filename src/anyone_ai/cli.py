@@ -32,7 +32,8 @@ def render(answer: Answer) -> str:
     for seg in answer.segments:
         refs = ", ".join(seg.evidence_ids)
         if seg.kind == "quote":
-            out.append(style("1", f"  “{seg.text}”") + style("32", f"  [{refs} ✓ verbatim]"))
+            tag = f"  [{refs} ✓ verbatim" + (f", as reported by {seg.reported_by}]" if seg.reported_by else "]")
+            out.append(style("1", f"  “{' '.join(seg.text.split())}”") + style("32", tag))  # verification ignores whitespace
         elif seg.kind == "extrapolation":
             tag = f"  [extrapolation from {refs}]"
             out.append(f"  ~ {seg.text}" + style("33", tag))
@@ -98,6 +99,110 @@ def cmd_init(args) -> int:
         f"anyone add <url-or-folder>   (public material by {args.name})"
     print(f"Created {path}\nNext: {hint}")
     return 0
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "persona"
+
+
+def _interactive() -> bool:
+    return sys.stdin.isatty()
+
+
+def _confirm_handles(name: str):
+    def ask(handles: list[str], notes: str) -> list[str]:
+        if not handles or not _interactive():
+            if handles:
+                print(style("33", f"Possible X account(s) for {name}: " + ", ".join("@" + h for h in handles)
+                            + ". Not used until confirmed: re-run with --x-handle <handle>."))
+            return []
+        if notes:
+            print(style("2", f"Search notes: {notes}"))
+        out = []
+        for h in handles:
+            if input(f"Is @{h} {name}'s own X account? Posts by it will count as their words. [y/N] ").strip().lower() in ("y", "yes"):
+                out.append(h)
+        return out
+    return ask
+
+
+_GROUPS = (("by_me", "Their own words"), ("secondhand", "Reporting about them (quotes shown as 'as reported by')"))
+
+
+def _review_dossier(root: Path, result, name: str, assume_yes: bool) -> None:
+    d = result.discovery
+    items = result.added
+    print(f"\n{d.searches} search(es), {len(d.candidates)} candidate source(s): {len(items)} added, "
+          f"{len(result.unchanged)} already had, {len(result.skipped)} skipped.")
+    if d.dropped_unseen:
+        print(style("2", f"  {len(d.dropped_unseen)} URL(s) from the model were dropped: no search returned them."))
+    numbered = []
+    for key, label in _GROUPS:
+        group = [i for i in items if i.authorship == key]
+        if group:
+            print(style("1", f"\n{label}:"))
+        for it in group:
+            numbered.append(it)
+            print(f"  [{len(numbered)}] {it.date or '          '}  {it.title[:80]}  ({it.outlet})  {it.source_id}")
+            print(style("2", f"      {it.url}  · {it.why}"))
+    for url, why in result.skipped[:15]:
+        print(style("2", f"  - skipped {url}  ({why})"))
+    if len(result.skipped) > 15:
+        print(style("2", f"  - ... and {len(result.skipped) - 15} more skipped"))
+    if numbered and _interactive() and not assume_yes:
+        print(f"\nCheck that every source is about this {name}. Remove wrong-person or irrelevant ones.")
+        picks = input("Numbers to remove (e.g. 2 5 7), or Enter to keep all: ").split()
+        with Store(index_path(root)) as store:
+            for p in picks:
+                if p.isdigit() and 1 <= int(p) <= len(numbered):
+                    it = numbered[int(p) - 1]
+                    store.remove_source(it.source_id)
+                    print(style("2", f"  removed {it.source_id}  {it.title[:60]}"))
+    elif numbered:
+        print(f"\nReview with `anyone sources`; drop anything not about {name} with `anyone remove <id>`.")
+
+
+def _run_research(root: Path, manifest: Manifest, args, topic: str | None) -> int:
+    from .providers import AnthropicProvider
+    from .research.pipeline import research
+
+    print(style("2", f"Uses your own Anthropic key: up to {args.max_searches} web searches ($10 per 1,000) plus model "
+                     "tokens, typically 30-60k input tokens per run. Anyone fetches every page itself."))
+    if not args.yes and _interactive() and input("Start research? [y/N] ").strip().lower() not in ("y", "yes"):
+        print("Aborted.")
+        return 1
+    result = research(root, manifest, AnthropicProvider(manifest.model), topic=topic, max_searches=args.max_searches,
+                      confirm_handles=_confirm_handles(manifest.subject.name),
+                      progress=lambda msg: print(style("2", msg), file=sys.stderr, flush=True))
+    _review_dossier(root, result, manifest.subject.name, args.yes)
+    return 0
+
+
+def cmd_new(args) -> int:
+    from .manifest import Research
+
+    root = Path(args.out or _slug(args.name)).resolve()
+    if (root / "persona.yaml").exists():
+        raise ValueError(f"{root / 'persona.yaml'} already exists. Use `anyone -C {root} deepen <topic>` to research more.")
+    args.i_am_this_person = False
+    research = Research(links=args.link, hint=args.hint or "", x_handles=args.x_handle)  # validates input
+    if not _confirm_init(args):
+        print("Aborted. Nothing was created.")
+        return 1
+    root.mkdir(parents=True, exist_ok=True)
+    write_new_manifest(root, args.name, args.kind, research)
+    print(f"Created {root / 'persona.yaml'}")
+    rc = _run_research(root, load_manifest(root), args, topic=None)
+    print(f"\nNext: anyone -C {root} chat")
+    return rc
+
+
+def cmd_deepen(args) -> int:
+    root = _root(args)
+    manifest = load_manifest(root)
+    if manifest.is_self:
+        raise ValueError("deepen researches the web for someone else; in self mode add your own material with `anyone add`.")
+    return _run_research(root, manifest, args, topic=args.topic)
 
 
 def _ask_authorship(args, what: str, manifest: Manifest) -> str:
@@ -234,7 +339,7 @@ def cmd_sources(args) -> int:
         return 0
     for s in rows:
         flag = style("31", " [excluded]") if s.excluded else ""
-        who = "" if s.authorship == "by_me" else style("33", f" [{s.authorship}]")
+        who = "" if s.authorship == "by_me" else style("33", f" [{s.authorship}" + (f": {s.outlet}]" if s.outlet else "]"))
         print(f"{s.id}  {s.date or '----------'}  {s.title}  ({s.chunks} chunks){who}{flag}")
         print(style("2", f"    {s.path}  · {s.origin}, {s.ownership_proof.replace('_', ' ')}"))
     return 0
@@ -388,6 +493,24 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--yes", action="store_true", help="other kinds: accept the notice non-interactively")
     s.set_defaults(func=cmd_init)
 
+    s = sub.add_parser("new", help="research someone from public sources and build their persona")
+    s.add_argument("name", help='the person, e.g. "Paul Graham"')
+    s.add_argument("--kind", choices=["public_figure", "private_individual"], default="public_figure")
+    s.add_argument("--link", action="append", default=[], metavar="URL",
+                   help="a link you know is theirs or about them (repeatable): their site, x.com/<handle>, a talk")
+    s.add_argument("--hint", help='who they are, to tell namesakes apart, e.g. "CEO of Acme, Lagos"')
+    s.add_argument("--x-handle", action="append", default=[], metavar="HANDLE", help="their X account (repeatable)")
+    s.add_argument("--out", help="persona directory (default: ./<name-slug>)")
+    s.add_argument("--max-searches", type=int, default=8, choices=range(1, 21), metavar="N", help="1-20 (default 8)")
+    s.add_argument("--yes", action="store_true", help="accept the notice and cost prompt; skip the dossier review")
+    s.set_defaults(func=cmd_new)
+
+    s = sub.add_parser("deepen", help="research more on one topic for this persona")
+    s.add_argument("topic", help='e.g. "pricing" or "remote work"')
+    s.add_argument("--max-searches", type=int, default=4, choices=range(1, 21), metavar="N", help="1-20 (default 4)")
+    s.add_argument("--yes", action="store_true", help="skip the cost prompt and the dossier review")
+    s.set_defaults(func=cmd_deepen)
+
     s = sub.add_parser("ingest", help="add writing (.md .txt .html .pdf .docx files or folders)")
     s.add_argument("paths", nargs="+")
     s.add_argument("--date", help="date for these sources (YYYY-MM-DD) if not in front matter")
@@ -408,7 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("authorship", help="mark a source as written by the subject (by_me) or not (ai_assisted)")
     s.add_argument("source_id")
-    s.add_argument("value", choices=["by_me", "ai_assisted"])
+    s.add_argument("value", choices=["by_me", "secondhand", "ai_assisted"])
     s.set_defaults(func=cmd_authorship)
 
     sub.add_parser("sources", help="list ingested sources").set_defaults(func=cmd_sources)

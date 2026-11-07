@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS sources (
   authorship TEXT NOT NULL DEFAULT 'by_me',
   origin TEXT NOT NULL DEFAULT 'file',
   ownership_proof TEXT NOT NULL DEFAULT 'local_file',
-  url TEXT
+  url TEXT,
+  outlet TEXT
 );
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
@@ -44,11 +45,14 @@ _SOURCE_MIGRATIONS = {
     "origin": "TEXT NOT NULL DEFAULT 'file'",
     "ownership_proof": "TEXT NOT NULL DEFAULT 'local_file'",
     "url": "TEXT",
+    "outlet": "TEXT",
 }
 
-# by_me: the owner wrote it; verbatim quotes allowed.
-# ai_assisted: drafted with AI or others; usable as context, never shown as the owner's verbatim words.
-AUTHORSHIP = ("by_me", "ai_assisted")
+# by_me: the subject wrote it (you, in self mode); verbatim quotes allowed.
+# secondhand: reporting about the subject by an outlet; only words the outlet itself puts in quotation
+#   marks near the subject's name can be quoted, labeled "as reported by <outlet>".
+# ai_assisted: drafted with AI or by others; context only, never shown as the subject's verbatim words.
+AUTHORSHIP = ("by_me", "secondhand", "ai_assisted")
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,7 @@ class Evidence:
     score: float = 0.0
     authorship: str = "by_me"
     url: str | None = None
+    outlet: str | None = None
 
     @property
     def quotable(self) -> bool:
@@ -82,6 +87,7 @@ class SourceRow:
     origin: str = "file"
     ownership_proof: str = "local_file"
     url: str | None = None
+    outlet: str | None = None
 
 
 @dataclass
@@ -139,7 +145,8 @@ class Store:
     def ingest_text(self, key: str, title: str, date: str | None, text: str, *, result: IngestResult | None = None,
                     redact_names: list[str] | None = None, redact_pii: bool = True,
                     authorship: str = "by_me", origin: str = "file",
-                    ownership_proof: str = "local_file", url: str | None = None) -> SourceRow | None:
+                    ownership_proof: str = "local_file", url: str | None = None,
+                    outlet: str | None = None) -> SourceRow | None:
         """Add one document. ``key`` identifies it across re-imports (file path or canonical URL).
 
         Returns None if identical content is already indexed. If ``key`` exists with different
@@ -168,8 +175,8 @@ class Store:
         with self.conn:
             self.conn.execute(
                 "INSERT INTO sources (id, path, title, date, sha256, added_at, text, authorship, origin, "
-                "ownership_proof, url) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                (source_id, key, title, date, digest, added_at, text, authorship, origin, ownership_proof, url),
+                "ownership_proof, url, outlet) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (source_id, key, title, date, digest, added_at, text, authorship, origin, ownership_proof, url, outlet),
             )
             for c in chunks:
                 chunk_id = f"{source_id}#{c.ordinal}"
@@ -240,7 +247,7 @@ class Store:
         rows = self.conn.execute(
             """
             SELECT c.id AS chunk_id, c.text, s.id AS source_id, s.title, s.date, s.path,
-                   s.authorship, s.url, bm25(chunks_fts) AS score
+                   s.authorship, s.url, s.outlet, bm25(chunks_fts) AS score
             FROM chunks_fts
             JOIN chunks c ON c.id = chunks_fts.chunk_id
             JOIN sources s ON s.id = c.source_id
@@ -253,7 +260,7 @@ class Store:
         return [
             Evidence(chunk_id=r["chunk_id"], source_id=r["source_id"], title=r["title"], date=r["date"],
                      path=r["path"], text=r["text"], score=round(-r["score"], 4),
-                     authorship=r["authorship"], url=r["url"])
+                     authorship=r["authorship"], url=r["url"], outlet=r["outlet"])
             for r in rows
         ]
 
@@ -276,4 +283,4 @@ def _expand(paths: list[Path]) -> list[Path]:
 def _source_row(r: sqlite3.Row) -> SourceRow:
     return SourceRow(id=r["id"], path=r["path"], title=r["title"], date=r["date"], added_at=r["added_at"],
                      excluded=bool(r["excluded"]), chunks=r["n"], sha256=r["sha256"], authorship=r["authorship"],
-                     origin=r["origin"], ownership_proof=r["ownership_proof"], url=r["url"])
+                     origin=r["origin"], ownership_proof=r["ownership_proof"], url=r["url"], outlet=r["outlet"])

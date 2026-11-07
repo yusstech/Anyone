@@ -73,7 +73,8 @@ function renderAnswer(a) {
   const li = el("li", "msg-ai");
   for (const seg of a.segments) {
     const box = el("div", `seg seg-${seg.kind}`);
-    const label = el("div", "label", seg.kind === "quote" ? `${LABELS.quote} ✓` : LABELS[seg.kind]);
+    const quoteLabel = seg.reported_by ? `${LABELS.quote} ✓ · as reported by ${seg.reported_by}` : `${LABELS.quote} ✓`;
+    const label = el("div", "label", seg.kind === "quote" ? quoteLabel : LABELS[seg.kind]);
     for (const id of seg.evidence_ids) {
       const b = el("button", "cite");
       b.type = "button";
