@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from citeself.manifest import DATA_DIR
-from citeself.store import Store
-from citeself.text import chunk_text, clean_text, markdown_to_text, normalize, parse_front_matter, query_terms
+from anyone_ai.manifest import DATA_DIR
+from anyone_ai.store import Store
+from anyone_ai.text import chunk_text, clean_text, markdown_to_text, normalize, parse_front_matter, query_terms
 
 FIX = Path(__file__).parent / "fixtures"
 
@@ -92,7 +92,7 @@ def test_reingesting_changed_file_replaces_old_version(persona_dir):
 
 
 def test_html_keeps_main_drops_chrome_and_reads_date(tmp_path):
-    from citeself.text import extract
+    from anyone_ai.text import extract
 
     page = tmp_path / "post.html"
     page.write_text(
@@ -107,7 +107,7 @@ def test_html_keeps_main_drops_chrome_and_reads_date(tmp_path):
 
 
 def test_html_without_main_falls_back_to_body(tmp_path):
-    from citeself.text import extract
+    from anyone_ai.text import extract
 
     page = tmp_path / "plain.html"
     page.write_text("<html><body><nav>menu</nav><p>Only paragraph.</p></body></html>")
@@ -130,7 +130,7 @@ def _make_docx(path, paragraphs, title="Voice guide", created="2026-05-01T09:00:
 
 
 def test_docx_extraction(tmp_path):
-    from citeself.text import extract
+    from anyone_ai.text import extract
 
     f = tmp_path / "guide.docx"
     _make_docx(f, ["Write plainly.", "Lead with the customer problem."])
@@ -142,7 +142,7 @@ def test_docx_extraction(tmp_path):
 def test_docx_rejects_dtd_and_garbage(tmp_path):
     import pytest
 
-    from citeself.text import extract
+    from anyone_ai.text import extract
 
     bad = tmp_path / "bomb.docx"
     _make_docx(bad, ["x"], extra=b'<!DOCTYPE lolz [<!ENTITY lol "lol">]>')

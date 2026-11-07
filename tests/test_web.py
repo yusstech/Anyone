@@ -5,8 +5,8 @@ import urllib.request
 
 import pytest
 
-from citeself.providers import ExtractiveProvider
-from citeself.web import App, make_server
+from anyone_ai.providers import ExtractiveProvider
+from anyone_ai.web import App, make_server
 
 
 @pytest.fixture

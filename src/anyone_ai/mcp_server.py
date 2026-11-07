@@ -1,6 +1,6 @@
-"""MCP server: let any MCP-capable agent consult a CiteSelf persona with citations.
+"""MCP server: let any MCP-capable agent consult an Anyone persona with citations.
 
-Run with ``citeself mcp`` (stdio). Requires the ``mcp`` extra.
+Run with ``anyone mcp`` (stdio). Requires the ``mcp`` extra.
 """
 from __future__ import annotations
 
@@ -17,13 +17,13 @@ from .providers import Provider, ProviderError
 
 def build_server(root: Path, provider: Provider | None = None, provider_override: str | None = None) -> MCPServer:
     persona = Persona(root, provider=provider, provider_override=provider_override)
-    name = persona.manifest.persona.name
+    name = persona.manifest.subject.name
     lock = threading.Lock()  # one SQLite connection; serialize access from worker threads
 
     server = MCPServer(
-        name="citeself",
+        name="anyone",
         log_level="WARNING",
-        title=f"CiteSelf: {name}",
+        title=f"Anyone: {name}",
         instructions=(
             f"{persona.manifest.disclosure} When you relay answers, keep the labels: present 'quote' segments as "
             f"{name}'s verbatim words with their source, 'extrapolation' segments as inference (not {name}'s words), "
@@ -43,7 +43,7 @@ def build_server(root: Path, provider: Provider | None = None, provider_override
     @server.tool(
         title=f"Ask {name}'s AI simulation",
         description=(
-            f"Ask an AI simulation of {name}, built from {name}'s own published material. Returns labeled segments: "
+            f"Ask an AI simulation of {name}, built from {persona.manifest.source_basis}. Returns labeled segments: "
             "'quote' (verbatim, machine-verified against the cited source), 'extrapolation' (inference, cites the "
             "evidence it relies on) and 'no_evidence'. Each call is independent (no memory between calls)."
         ),
@@ -54,7 +54,7 @@ def build_server(root: Path, provider: Provider | None = None, provider_override
 
     @server.tool(
         title=f"Search {name}'s record",
-        description=(f"Full-text search over {name}'s published material. Returns verbatim passages with source "
+        description=(f"Full-text search over {persona.manifest.source_basis}. Returns verbatim passages with source "
                      "titles and dates. No AI generation; use this to check exactly what was said."),
         annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
     )
@@ -71,7 +71,7 @@ def build_server(root: Path, provider: Provider | None = None, provider_override
 
     @server.tool(
         title=f"About {name}'s simulation",
-        description="Who this simulation represents, the disclosure to show users, its sources and the owner's boundaries.",
+        description="Who this simulation represents, the disclosure to show users, its sources and its boundaries.",
         annotations=ToolAnnotations(read_only_hint=True, open_world_hint=False),
     )
     async def persona_info() -> dict:
@@ -80,7 +80,7 @@ def build_server(root: Path, provider: Provider | None = None, provider_override
                 sources = [s for s in persona.store.list_sources() if not s.excluded]
             m = persona.manifest
             return {
-                "name": name, "bio": m.persona.bio, "disclosure": m.disclosure,
+                "name": name, "subject_kind": m.subject.kind, "bio": m.subject.bio, "disclosure": m.disclosure,
                 "blocked_topics": m.boundaries.blocked_topics,
                 "extrapolation_allowed": m.boundaries.allow_extrapolation,
                 "sources": [{"source_id": s.id, "title": s.title, "date": s.date} for s in sources],

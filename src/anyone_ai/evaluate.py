@@ -1,16 +1,16 @@
-"""citeself eval — measure how well the simulation matches *you*.
+"""anyone eval — measure how well the simulation matches *you*.
 
 Ground truth is the owner's own answers in ``eval.yaml``, written without looking
 at the AI. Three arms answer every question:
 
-  citeself  the full pipeline (retrieval + validated, labeled segments)
+  anyone  the full pipeline (retrieval + validated, labeled segments)
   bio_only  a generic model given only the name and bio from persona.yaml
   generic   a generic model given only the name
 
 A blind LLM judge (never told which arm wrote what) scores each answer's stance
 alignment with the owner's answer. Because LLM judges are imperfect, the run
 also writes a shuffled, anonymized rating sheet for the owner to score by hand;
-``citeself eval score`` turns that into per-arm results.
+``anyone eval score`` turns that into per-arm results.
 
 Method follows Park et al. 2024 ("Generative Agent Simulations of 1,000 People"):
 when the owner also gives a later re-answer, the owner's own consistency is the
@@ -31,11 +31,11 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .engine import Answer, Persona
-from .manifest import DATA_DIR, ManifestError
+from .manifest import ManifestError, data_dir
 from .providers import Completion
 
 EVAL_FILE = "eval.yaml"
-ARMS = ("citeself", "bio_only", "generic")
+ARMS = ("anyone", "bio_only", "generic")
 
 JUDGE_SCHEMA = {
     "type": "object",
@@ -78,8 +78,8 @@ class LLM(Protocol):
 
 
 EVAL_TEMPLATE = """\
-# CiteSelf evaluation set. Answer every question YOURSELF, in your own words,
-# BEFORE running `citeself eval run`, and without looking at the AI's answers.
+# Anyone evaluation set. Answer every question YOURSELF, in your own words,
+# BEFORE running `anyone eval run`, and without looking at the AI's answers.
 # Keep this file private: it is your ground truth.
 #
 #   covered: true  -> you believe your ingested material addresses this question
@@ -111,7 +111,7 @@ def init_eval(root: Path) -> Path:
 def load_eval_set(root: Path) -> list[EvalItem]:
     path = root / EVAL_FILE
     if not path.exists():
-        raise ManifestError(f"No {EVAL_FILE} in {root}. Run `citeself eval init` and write your answers first.")
+        raise ManifestError(f"No {EVAL_FILE} in {root}. Run `anyone eval init` and write your answers first.")
     try:
         items = EvalSet.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")) or {}).items
     except (yaml.YAMLError, ValidationError) as exc:
@@ -134,7 +134,7 @@ def planned_calls(items: list[EvalItem], arms: list[str], judge: bool) -> int:
 
 # --------------------------------------------------------------------- arms
 
-def citeself_text(answer: Answer) -> str:
+def anyone_text(answer: Answer) -> str:
     return "\n".join(f"[{s.kind}] {s.text}" for s in answer.segments)
 
 
@@ -163,7 +163,7 @@ class ItemResult:
     covered: bool
     answers: dict = field(default_factory=dict)      # arm -> text
     judgments: dict = field(default_factory=dict)    # arm -> {alignment, contradiction, rationale}
-    citeself: dict = field(default_factory=dict)     # status + validation counts
+    anyone: dict = field(default_factory=dict)     # status + validation counts
     ceiling: dict | None = None
 
 
@@ -178,24 +178,24 @@ def run_eval(persona: Persona, llm: LLM, items: list[EvalItem], arms: list[str] 
     if unknown:
         raise ValueError(f"Unknown arms: {sorted(unknown)}")
     m = persona.manifest
-    if "bio_only" in arms and not m.persona.bio:
+    if "bio_only" in arms and not m.subject.bio:
         arms.remove("bio_only")  # identical to generic without a bio
     results: list[ItemResult] = []
     for n, item in enumerate(items, start=1):
         if progress:
             progress(n, len(items), item.id)
         r = ItemResult(item.id, item.question, item.covered)
-        if "citeself" in arms:
+        if "anyone" in arms:
             a = persona.ask(item.question)
-            r.answers["citeself"] = citeself_text(a)
+            r.answers["anyone"] = anyone_text(a)
             v = a.validation
-            r.citeself = {"status": a.status, "abstained": _abstained(a), "quotes_verified": v.quotes_verified,
+            r.anyone = {"status": a.status, "abstained": _abstained(a), "quotes_verified": v.quotes_verified,
                           "quotes_demoted": v.quotes_demoted, "removed": len(v.removed),
                           "segments": [s.kind for s in a.segments]}
         for arm in ("bio_only", "generic"):
             if arm in arms:
-                bio = m.persona.bio if arm == "bio_only" else ""
-                c = baseline_answer(llm, m.persona.name, bio, item.question)
+                bio = m.subject.bio if arm == "bio_only" else ""
+                c = baseline_answer(llm, m.subject.name, bio, item.question)
                 r.answers[arm] = c.text if not c.refused else "[declined]"
         if use_judge:
             for arm, text in r.answers.items():
@@ -203,7 +203,7 @@ def run_eval(persona: Persona, llm: LLM, items: list[EvalItem], arms: list[str] 
             if item.my_answer_retest:
                 r.ceiling = judge(llm, item.question, item.my_answer, item.my_answer_retest)
         results.append(r)
-    return {"persona": m.persona.name, "model": m.model.name, "arms": arms, "judge": use_judge,
+    return {"persona": m.subject.name, "model": m.model.name, "arms": arms, "judge": use_judge,
             "created_at": _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds"),
             "items": [asdict(r) for r in results], "summary": summarize(results, arms)}
 
@@ -230,19 +230,19 @@ def summarize(results: list[ItemResult], arms: list[str]) -> dict:
             "normalized": round(mean / ceiling, 3) if mean and ceiling else None,
             "contradiction_rate": _mean([float(c) for c in contra]),
         }
-    if "citeself" in arms:
-        cs = [r.citeself for r in results]
+    if "anyone" in arms:
+        cs = [r.anyone for r in results]
         verified = sum(c["quotes_verified"] for c in cs)
         demoted = sum(c["quotes_demoted"] for c in cs)
-        out["citeself"] = {
+        out["anyone"] = {
             # Of the quotes the model proposed, how many survived verbatim checking.
             "proposed_quote_precision": round(verified / (verified + demoted), 3) if verified + demoted else None,
             "quotes_shown": verified,
             "quotes_demoted": demoted,
             "segments_removed": sum(c["removed"] for c in cs),
             # Desired: abstain when your material doesn't cover it, answer when it does.
-            "abstention_on_uncovered": _mean([float(r.citeself["abstained"]) for r in uncovered]),
-            "false_abstention_on_covered": _mean([float(r.citeself["abstained"]) for r in covered]),
+            "abstention_on_uncovered": _mean([float(r.anyone["abstained"]) for r in uncovered]),
+            "false_abstention_on_covered": _mean([float(r.anyone["abstained"]) for r in covered]),
         }
     return out
 
@@ -254,7 +254,7 @@ LABELS = "XYZ"
 
 def write_outputs(root: Path, run: dict, seed: int | None = None) -> Path:
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    out = root / DATA_DIR / "eval" / stamp
+    out = data_dir(root) / "eval" / stamp
     out.mkdir(parents=True, exist_ok=False)
     (out / "results.json").write_text(json.dumps(run, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     (out / "report.md").write_text(render_report(run), encoding="utf-8")
@@ -315,7 +315,7 @@ def score_ratings(run_dir: Path) -> dict:
 
 def render_report(run: dict) -> str:
     s = run["summary"]
-    lines = [f"# CiteSelf evaluation: {run['persona']}", "",
+    lines = [f"# Anyone evaluation: {run['persona']}", "",
              f"{run['created_at']} · model `{run['model']}` · {s['items']} questions "
              f"({s['covered']} covered by your material, {s['uncovered']} not)", ""]
     if run["judge"]:
@@ -325,9 +325,9 @@ def render_report(run: dict) -> str:
             lines.append(f"| {arm} | {a['alignment_covered']} | {a['normalized'] if a['normalized'] is not None else 'n/a'} "
                          f"| {a['contradiction_rate']} |")
         lines += ["", f"Your own consistency (re-answers vs first answers): {s['ceiling_alignment'] or 'n/a (add my_answer_retest)'}", ""]
-    if "citeself" in s:
-        c = s["citeself"]
-        lines += ["## Grounding (CiteSelf only)", "",
+    if "anyone" in s:
+        c = s["anyone"]
+        lines += ["## Grounding (Anyone only)", "",
                   f"- Proposed quotes that were verbatim: {c['proposed_quote_precision']} "
                   f"({c['quotes_shown']} shown, {c['quotes_demoted']} relabeled as extrapolation)",
                   f"- Unsupported segments removed: {c['segments_removed']}",
@@ -336,5 +336,5 @@ def render_report(run: dict) -> str:
     lines += ["## Caveats", "",
               "- The judge is an LLM and can be wrong. Your blind ratings (`rating_sheet.csv`) are the stronger signal.",
               "- Small question sets give noisy averages. Treat differences under ~0.5 points as inconclusive.",
-              "- The `generic` and `bio_only` arms always answer; CiteSelf may decline. Compare abstention numbers too.", ""]
+              "- The `generic` and `bio_only` arms always answer; Anyone may decline. Compare abstention numbers too.", ""]
     return "\n".join(lines)

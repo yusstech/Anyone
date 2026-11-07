@@ -5,8 +5,8 @@ import pytest
 pytest.importorskip("mcp")
 from mcp.client import Client  # noqa: E402
 
-from citeself.mcp_server import build_server  # noqa: E402
-from citeself.providers import ExtractiveProvider  # noqa: E402
+from anyone_ai.mcp_server import build_server  # noqa: E402
+from anyone_ai.providers import ExtractiveProvider  # noqa: E402
 
 
 def payload(result):

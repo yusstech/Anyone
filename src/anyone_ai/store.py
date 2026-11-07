@@ -8,6 +8,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .redact import redact_names as _redact_names, redact_pii as _redact_pii
 from .text import Chunk, chunk_text, clean_text, extract, query_terms
 
 SCHEMA = """
@@ -117,14 +118,15 @@ class Store:
     # ---------------------------------------------------------------- ingest
 
     def ingest_paths(self, paths: list[Path], redact_names: list[str] | None = None,
-                     date_override: str | None = None, authorship: str = "by_me") -> IngestResult:
+                     date_override: str | None = None, authorship: str = "by_me",
+                     redact_pii: bool = True) -> IngestResult:
         result = IngestResult([], [], [])
         for path in _expand(paths):
             path = path.resolve()
             try:
                 ex = extract(path)
                 row = self.ingest_text(str(path), ex.title, date_override or ex.date, ex.text, result=result,
-                                       redact_names=redact_names, authorship=authorship)
+                                       redact_names=redact_names, redact_pii=redact_pii, authorship=authorship)
             except (OSError, ValueError) as exc:
                 result.errors.append((str(path), str(exc)))
                 continue
@@ -135,16 +137,22 @@ class Store:
         return result
 
     def ingest_text(self, key: str, title: str, date: str | None, text: str, *, result: IngestResult | None = None,
-                    redact_names: list[str] | None = None, authorship: str = "by_me", origin: str = "file",
+                    redact_names: list[str] | None = None, redact_pii: bool = True,
+                    authorship: str = "by_me", origin: str = "file",
                     ownership_proof: str = "local_file", url: str | None = None) -> SourceRow | None:
         """Add one document. ``key`` identifies it across re-imports (file path or canonical URL).
 
         Returns None if identical content is already indexed. If ``key`` exists with different
         content (edited, or new redaction rules), the new version replaces the old one.
+        Redaction (names, and emails/phones/addresses when ``redact_pii``) happens before
+        hashing, storage and indexing.
         """
         if authorship not in AUTHORSHIP:
             raise ValueError(f"authorship must be one of {AUTHORSHIP}")
-        text = redact(clean_text(text), redact_names or [])
+        text = clean_text(text)
+        if redact_pii:
+            text = _redact_pii(text)
+        text = _redact_names(text, redact_names or [])
         if not text:
             raise ValueError("no extractable text")
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -249,11 +257,6 @@ class Store:
             for r in rows
         ]
 
-
-def redact(text: str, names: list[str]) -> str:
-    for name in sorted({n for n in names if n.strip()}, key=len, reverse=True):
-        text = re.sub(rf"(?<!\w){re.escape(name.strip())}(?!\w)", "[redacted]", text, flags=re.I)
-    return text
 
 
 def _expand(paths: list[Path]) -> list[Path]:

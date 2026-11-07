@@ -29,7 +29,7 @@ from protego import Protego
 from .. import __version__
 from ..text import _HTMLText
 
-USER_AGENT = f"CiteSelf/{__version__} (+https://github.com/yusstech/PersonaLab; owner-initiated import)"
+USER_AGENT = f"Anyone/{__version__} (+https://github.com/yusstech/PersonaLab; user-initiated import)"
 MAX_BYTES = 5 * 1024 * 1024
 TIMEOUT = 20
 MIN_WORDS = 60

@@ -6,9 +6,9 @@ import anthropic
 import httpx2
 import pytest
 
-from citeself.cli import main
-from citeself.manifest import DATA_DIR, ModelSettings
-from citeself.providers import FALLBACK_BETA, AnthropicProvider, GenerationRequest, MalformedOutput, ProviderError
+from anyone_ai.cli import main
+from anyone_ai.manifest import DATA_DIR, ModelSettings
+from anyone_ai.providers import FALLBACK_BETA, AnthropicProvider, GenerationRequest, MalformedOutput, ProviderError
 
 from .conftest import FIXTURES
 
@@ -105,7 +105,7 @@ def test_live_anthropic_smoke(persona_dir):
     """Real API call. Run with: pytest -m live (needs ANTHROPIC_API_KEY)."""
     if not os.environ.get("ANTHROPIC_API_KEY"):
         pytest.skip("ANTHROPIC_API_KEY not set")
-    from citeself.engine import Persona
+    from anyone_ai.engine import Persona
 
     p = Persona(persona_dir)
     a = p.ask("How does Avery think about releasing with known risks?")

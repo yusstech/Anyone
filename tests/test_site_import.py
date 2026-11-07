@@ -4,10 +4,10 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from citeself.cli import main
-from citeself.importers.site import canonical, import_site, parse_feed, parse_sitemap
-from citeself.manifest import DATA_DIR
-from citeself.store import Store
+from anyone_ai.cli import main
+from anyone_ai.importers.site import canonical, import_site, parse_feed, parse_sitemap
+from anyone_ai.manifest import DATA_DIR
+from anyone_ai.store import Store
 
 WORDS = " ".join(["Shipping small experiments beats long plans because evidence compounds."] * 12)
 

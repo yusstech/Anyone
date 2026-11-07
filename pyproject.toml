@@ -3,15 +3,15 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "citeself"
+name = "anyone-ai"
 version = "0.1.0.dev0"
-description = "Publish an AI of yourself that only speaks on the record: every quote verbatim, cited, and machine-checked."
+description = "Simulate anyone from public sources. Every quote is verbatim, cited and machine-checked."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-authors = [{ name = "CiteSelf contributors" }]
-keywords = ["ai", "persona", "rag", "citations", "digital-twin", "llm", "claude"]
+authors = [{ name = "Anyone contributors" }]
+keywords = ["ai", "persona", "simulation", "rag", "citations", "digital-twin", "llm", "claude"]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
   "Intended Audience :: Developers",
@@ -31,13 +31,13 @@ mcp = ["mcp>=2.3"]
 dev = ["pytest>=8", "pypdf>=4.0", "mcp>=2.3"]
 
 [project.scripts]
-citeself = "citeself.cli:main"
+anyone = "anyone_ai.cli:main"
 
 [project.urls]
 Repository = "https://github.com/yusstech/PersonaLab"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/citeself"]
+packages = ["src/anyone_ai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

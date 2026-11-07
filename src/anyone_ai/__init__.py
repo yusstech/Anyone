@@ -1,4 +1,4 @@
-"""CiteSelf — an AI of you that only speaks on the record."""
+"""Anyone: simulate anyone from public sources, with every quote verified verbatim."""
 __version__ = "0.1.0.dev0"
 
 from .engine import Answer, Conversation, Persona  # noqa: E402

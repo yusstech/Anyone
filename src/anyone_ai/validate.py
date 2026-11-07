@@ -1,4 +1,4 @@
-"""Citation and quote validator — the trust core of CiteSelf.
+"""Citation and quote validator — the trust core of Anyone.
 
 The model *proposes* labeled segments; this module decides what the user sees.
 Rules (applied in order, every decision recorded in the report):
@@ -17,7 +17,7 @@ Rules (applied in order, every decision recorded in the report):
 6. If nothing survives, a single ``no_evidence`` segment is returned.
 
 What this does NOT check: whether an extrapolation is a *fair* reading of its
-cited evidence. That is a semantic judgment, measured by ``citeself eval``.
+cited evidence. That is a semantic judgment, measured by ``anyone eval``.
 """
 from __future__ import annotations
 

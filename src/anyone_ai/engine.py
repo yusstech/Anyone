@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .manifest import DATA_DIR, Manifest, load_manifest
+from .manifest import Manifest, index_path, load_manifest
 from .providers import GenerationRequest, MalformedOutput, Provider, make_provider
 from .store import Evidence, Store
 from .validate import Segment, ValidationReport, validate_segments
@@ -63,13 +63,13 @@ class Turn:
 
 
 def build_system_prompt(m: Manifest) -> str:
-    n = m.persona.name
+    n = m.subject.name
     lines = [
-        f"You answer questions for CiteSelf, an AI simulation of {n} built from {n}'s own published material. "
+        f"You answer questions for Anyone, an AI simulation of {n} built from {m.source_basis}. "
         f"You are not {n} and never claim to be.",
     ]
-    if m.persona.bio:
-        lines.append(f"About {n}: {m.persona.bio}")
+    if m.subject.bio:
+        lines.append(f"About {n}: {m.subject.bio}")
     lines += [
         "",
         "Each user turn contains <evidence> passages from that material and a <question>. "
@@ -96,11 +96,15 @@ def build_system_prompt(m: Manifest) -> str:
         "- If the evidence does not address the question, reply with a single no_evidence segment.",
         "- At most 5 segments. Be concise.",
     ]
+    if m.subject.kind == "private_individual":
+        lines.append(f"- {n} is a private individual who has not consented to this simulation. Discuss only their "
+                     "public professional life: work, career and views they have published. Never speculate about "
+                     "their personal life, whereabouts, contact details or identity documents.")
     if not m.boundaries.allow_extrapolation:
         lines.append("- Do not produce extrapolation segments; use only quote and no_evidence.")
     if m.boundaries.blocked_topics:
-        lines.append(f"- {n} has asked not to be simulated on these topics; for them reply only with no_evidence: "
-                     + "; ".join(m.boundaries.blocked_topics))
+        who = f"{n} has asked not to be simulated on these topics" if m.is_self else "This simulation must not cover these topics"
+        lines.append(f"- {who}; for them reply only with no_evidence: " + "; ".join(m.boundaries.blocked_topics))
     return "\n".join(lines)
 
 
@@ -127,7 +131,7 @@ class Persona:
         self.root = root
         self.manifest = load_manifest(root)
         self.manifest.require_consent()
-        self.store = Store(root / DATA_DIR / "index.db")
+        self.store = Store(index_path(root))
         self.provider = provider or make_provider(self.manifest.model, provider_override)
         self.system_prompt = build_system_prompt(self.manifest)
 
@@ -136,7 +140,7 @@ class Persona:
 
     def _answer(self, question: str, segments: list[Segment], status: str, evidence=None, **kw) -> Answer:
         return Answer(question=question, segments=segments, evidence=evidence or {}, status=status,
-                      disclosure=self.manifest.disclosure, persona=self.manifest.persona.name, **kw)
+                      disclosure=self.manifest.disclosure, persona=self.manifest.subject.name, **kw)
 
     def _blocked(self, question: str) -> bool:
         q = question.lower()
@@ -149,11 +153,10 @@ class Persona:
         if len(question) > MAX_QUESTION_CHARS:
             raise ValueError(f"Question is longer than {MAX_QUESTION_CHARS} characters")
         history = history or []
-        name = self.manifest.persona.name
+        name = self.manifest.subject.name
 
         if self._blocked(question):
-            return self._answer(question, [Segment("no_evidence", f"{name} has asked this simulation not to discuss that topic.")],
-                                "boundary")
+            return self._answer(question, [Segment("no_evidence", self.manifest.boundary_notice)], "boundary")
 
         query = question if not history else f"{question} {history[-1].question}"
         hits = self.store.search(query, k=self.manifest.retrieval.top_k)
@@ -190,7 +193,7 @@ class Persona:
 
 
 class Conversation:
-    """Multi-turn session. Kept in memory only — CiteSelf does not log conversations."""
+    """Multi-turn session. Kept in memory only — Anyone does not log conversations."""
 
     def __init__(self, persona: Persona, max_turns: int = 10):
         self.persona = persona

@@ -1,4 +1,4 @@
-"""citeself command-line interface."""
+"""anyone command-line interface."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,7 @@ from pathlib import Path
 from . import __version__
 from .engine import Answer, Conversation, Persona
 from .governance import revoke
-from .manifest import DATA_DIR, ManifestError, find_root, load_manifest, write_new_manifest
+from .manifest import SUBJECT_KINDS, Manifest, ManifestError, find_root, index_path, load_manifest, write_new_manifest
 from .providers import ProviderError
 from .store import Store
 
@@ -58,39 +58,79 @@ def _root(args) -> Path:
     return find_root(Path(args.dir))
 
 
+_THIRD_PARTY_NOTICE = {
+    "public_figure": "public sources",
+    "private_individual": "public PROFESSIONAL material only (work, career, published views)",
+}
+
+
+def _confirm_init(args) -> bool:
+    name, kind = args.name, args.kind
+    if kind == "self":
+        if args.yes:
+            raise ValueError("--yes is for simulating someone else; for yourself use --i-am-this-person")
+        if args.i_am_this_person:
+            return True
+        print("Self mode builds a simulation of YOURSELF, from material you wrote or have the right to use.")
+        return input(f"Are you {name}, and do you agree to that? [y/N] ").strip().lower() in ("y", "yes")
+    if args.i_am_this_person:
+        raise ValueError("--i-am-this-person is only for --kind self")
+    if args.yes:
+        return True
+    print(f"You are creating an AI simulation of {name}, who is not you, from {_THIRD_PARTY_NOTICE[kind]}.")
+    print(f"  - {name} has not endorsed{' or consented to' if kind == 'private_individual' else ''} this; "
+          "every answer says so.")
+    if kind == "private_individual":
+        print("  - Health, family, religion, sexuality and location are always off limits.")
+    print("  - Emails, phone numbers and street addresses are redacted from everything you add.")
+    print(f"  - Don't present output as {name}'s real words or posts. Only verified quotes are their words.")
+    return input("Continue? [y/N] ").strip().lower() in ("y", "yes")
+
+
 def cmd_init(args) -> int:
     root = Path(args.dir).resolve()
+    if not _confirm_init(args):
+        print("Aborted. Nothing was created.")
+        return 1
     root.mkdir(parents=True, exist_ok=True)
-    if not args.i_am_this_person:
-        print("CiteSelf only builds a simulation of YOURSELF, from material you wrote or have the right to use.")
-        confirm = input(f"Are you {args.name}, and do you agree to that? [y/N] ").strip().lower()
-        if confirm not in ("y", "yes"):
-            print("Aborted. Nothing was created.")
-            return 1
-    path = write_new_manifest(root, args.name)
-    print(f"Created {path}\nNext: citeself ingest <your-writing-folder>")
+    path = write_new_manifest(root, args.name, args.kind)
+    hint = "anyone ingest <your-writing-folder>" if args.kind == "self" else \
+        f"anyone add <url-or-folder>   (public material by {args.name})"
+    print(f"Created {path}\nNext: {hint}")
     return 0
 
 
-def _ask_authorship(args, what: str) -> str:
-    """Authorship decides whether text may be quoted as the owner's own words, so ask when unsure."""
+def _ask_authorship(args, what: str, manifest: Manifest) -> str:
+    """Authorship decides whether text may be quoted as the subject's own words, so ask when unsure.
+
+    ``by_me`` means "written by the subject" (you, in self mode)."""
     if getattr(args, "authorship", None):
         return args.authorship
+    name = manifest.subject.name
     if not sys.stdin.isatty():
+        if not manifest.is_self:  # never assume someone else's authorship
+            raise ValueError(f"Say who wrote {what}: --authorship by_me ({name} wrote it, word for word) "
+                             "or --authorship ai_assisted (anything else; never quoted)")
         print(style("2", f"Treating {what} as written by you (by_me). Use --authorship ai_assisted if not."))
         return "by_me"
-    print(f"Did you write {what} yourself, word for word?")
-    print("  [y] yes, I wrote it        -> it can be quoted as your words")
-    print("  [a] AI-assisted / drafted by someone else -> used as context only, never quoted as you")
-    print("  [n] no, it isn't mine      -> don't import it")
+    if manifest.is_self:
+        print(f"Did you write {what} yourself, word for word?")
+        print("  [y] yes, I wrote it        -> it can be quoted as your words")
+        print("  [a] AI-assisted / drafted by someone else -> used as context only, never quoted as you")
+        print("  [n] no, it isn't mine      -> don't import it")
+    else:
+        print(f"Did {name} write {what}, word for word?")
+        print(f"  [y] yes, {name} wrote it   -> it can be quoted as {name}'s words")
+        print(f"  [a] no: written about {name}, ghostwritten or AI-drafted -> context only, never quoted as {name}")
+        print("  [n] not relevant          -> don't import it")
     while True:
         ans = input("> ").strip().lower()
-        if ans in ("y", "yes", ""):
+        if ans in ("y", "yes") or (ans == "" and manifest.is_self):
             return "by_me"
         if ans in ("a", "ai"):
             return "ai_assisted"
         if ans in ("n", "no"):
-            raise ValueError("Not imported: CiteSelf only uses material you wrote or approved.")
+            raise ValueError("Not imported.")
 
 
 def _print_ingest(res, st) -> None:
@@ -111,9 +151,10 @@ def cmd_ingest(args) -> int:
     root = _root(args)
     manifest = load_manifest(root)
     manifest.require_consent()
-    authorship = _ask_authorship(args, "these files")
-    with Store(root / DATA_DIR / "index.db") as store:
-        res = store.ingest_paths([Path(p) for p in args.paths], manifest.privacy.redact_names, args.date, authorship)
+    authorship = _ask_authorship(args, "these files", manifest)
+    with Store(index_path(root)) as store:
+        res = store.ingest_paths([Path(p) for p in args.paths], manifest.privacy.redact_names, args.date, authorship,
+                                 redact_pii=manifest.privacy.redact_pii)
         _print_ingest(res, store.stats())
     return 1 if res.errors and not res.added else 0
 
@@ -135,7 +176,8 @@ def cmd_add(args) -> int:
     root = _root(args)
     manifest = load_manifest(root)
     manifest.require_consent()
-    print(f"Looking for your writing on {target} (respecting robots.txt, about 1 request per second)...", flush=True)
+    whose = "your" if manifest.is_self else f"{manifest.subject.name}'s"
+    print(f"Looking for {whose} writing on {target} (respecting robots.txt, about 1 request per second)...", flush=True)
     try:
         found = import_site(target, max_pages=args.max_pages, exclude=args.exclude, delay=args.delay,
                             progress=lambda n, total, u: print(style("2", f"  [{n}/{total}] {u}"), file=sys.stderr))
@@ -153,13 +195,14 @@ def cmd_add(args) -> int:
     if not found.pages:
         print("Nothing to import.")
         return 1
-    authorship = _ask_authorship(args, f"the {len(found.pages)} page(s) on {found.site}")
+    authorship = _ask_authorship(args, f"the {len(found.pages)} page(s) on {found.site}", manifest)
     res = IngestResult([], [], [])
-    with Store(root / DATA_DIR / "index.db") as store:
+    with Store(index_path(root)) as store:
         for pg in found.pages:
             try:
                 row = store.ingest_text(pg.url, pg.title, pg.date, pg.text, result=res,
-                                        redact_names=manifest.privacy.redact_names, authorship=authorship,
+                                        redact_names=manifest.privacy.redact_names,
+                                        redact_pii=manifest.privacy.redact_pii, authorship=authorship,
                                         origin="site", ownership_proof="unverified_site", url=pg.url)
             except ValueError as exc:
                 res.errors.append((pg.url, str(exc)))
@@ -170,13 +213,13 @@ def cmd_add(args) -> int:
         gone -= {u for u, _ in found.skipped}
     if gone:
         print(style("33", f"{len(gone)} previously imported page(s) were not found this time "
-                          "(deleted or moved?). Review with `citeself sources` and `citeself remove <id>`."))
+                          "(deleted or moved?). Review with `anyone sources` and `anyone remove <id>`."))
     return 0
 
 
 def cmd_authorship(args) -> int:
     root = _root(args)
-    with Store(root / DATA_DIR / "index.db") as store:
+    with Store(index_path(root)) as store:
         ok = store.set_authorship(args.source_id, args.value)
     print(f"{args.source_id} marked {args.value}" if ok else f"No source {args.source_id}")
     return 0 if ok else 1
@@ -184,10 +227,10 @@ def cmd_authorship(args) -> int:
 
 def cmd_sources(args) -> int:
     root = _root(args)
-    with Store(root / DATA_DIR / "index.db") as store:
+    with Store(index_path(root)) as store:
         rows = store.list_sources()
     if not rows:
-        print("No sources yet. Run: citeself ingest <path>")
+        print("No sources yet. Run: anyone ingest <path>")
         return 0
     for s in rows:
         flag = style("31", " [excluded]") if s.excluded else ""
@@ -199,7 +242,7 @@ def cmd_sources(args) -> int:
 
 def _toggle(args, excluded: bool) -> int:
     root = _root(args)
-    with Store(root / DATA_DIR / "index.db") as store:
+    with Store(index_path(root)) as store:
         ok = store.set_excluded(args.source_id, excluded)
     print(("Excluded " if excluded else "Included ") + args.source_id if ok else f"No source {args.source_id}")
     return 0 if ok else 1
@@ -207,7 +250,7 @@ def _toggle(args, excluded: bool) -> int:
 
 def cmd_remove(args) -> int:
     root = _root(args)
-    with Store(root / DATA_DIR / "index.db") as store:
+    with Store(index_path(root)) as store:
         ok = store.remove_source(args.source_id)
     print(f"Removed {args.source_id} from the index" if ok else f"No source {args.source_id}")
     return 0 if ok else 1
@@ -251,7 +294,7 @@ def cmd_chat(args) -> int:
 def cmd_revoke(args) -> int:
     root = _root(args)
     if not args.yes:
-        confirm = input("Delete the CiteSelf index (all ingested text, chunks and search data)? [y/N] ").strip().lower()
+        confirm = input("Delete the Anyone index (all ingested text, chunks and search data)? [y/N] ").strip().lower()
         if confirm not in ("y", "yes"):
             print("Aborted.")
             return 1
@@ -274,7 +317,7 @@ def cmd_eval_init(args) -> int:
     from .evaluate import init_eval
 
     path = init_eval(_root(args))
-    print(f"Created {path}. Write your own answers BEFORE looking at any AI output, then: citeself eval run")
+    print(f"Created {path}. Write your own answers BEFORE looking at any AI output, then: anyone eval run")
     return 0
 
 
@@ -303,7 +346,7 @@ def cmd_eval_run(args) -> int:
     out = write_outputs(root, run)
     print((out / "report.md").read_text(encoding="utf-8"))
     print(f"Saved to {out}\nFor the strongest signal, rate {out / 'rating_sheet.csv'} yourself (don't open rating_key.json),"
-          f" then: citeself eval score {out}")
+          f" then: anyone eval score {out}")
     return 0
 
 
@@ -324,32 +367,38 @@ def cmd_mcp(args) -> int:
     try:
         from .mcp_server import run
     except ImportError:
-        print("The MCP server needs the 'mcp' extra: pip install 'citeself[mcp]'", file=sys.stderr)
+        print("The MCP server needs the 'mcp' extra: pip install 'anyone-ai[mcp]'", file=sys.stderr)
         return 2
     run(_root(args), provider_override=args.provider)  # stdio: never print to stdout here
     return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="citeself", description="An AI of you that only speaks on the record.")
-    p.add_argument("--version", action="version", version=f"citeself {__version__}")
+    p = argparse.ArgumentParser(prog="anyone", description="Simulate anyone from public sources. "
+                                "Every quote is verbatim, cited and machine-checked.")
+    p.add_argument("--version", action="version", version=f"anyone {__version__}")
     p.add_argument("-C", "--dir", default=".", help="persona directory (default: current; searches parents)")
     sub = p.add_subparsers(dest="command", required=True)
 
-    s = sub.add_parser("init", help="create persona.yaml for yourself")
-    s.add_argument("--name", required=True, help="your name as it should appear")
-    s.add_argument("--i-am-this-person", action="store_true", help="confirm self-attestation non-interactively")
+    s = sub.add_parser("init", help="create persona.yaml for the person to simulate")
+    s.add_argument("--name", required=True, help="the person's name as it should appear")
+    s.add_argument("--kind", choices=SUBJECT_KINDS, default="self",
+                   help="who this is: public_figure, private_individual or self (default: self)")
+    s.add_argument("--i-am-this-person", action="store_true", help="--kind self: confirm self-attestation non-interactively")
+    s.add_argument("--yes", action="store_true", help="other kinds: accept the notice non-interactively")
     s.set_defaults(func=cmd_init)
 
-    s = sub.add_parser("ingest", help="add your writing (.md .txt .html .pdf files or folders)")
+    s = sub.add_parser("ingest", help="add writing (.md .txt .html .pdf .docx files or folders)")
     s.add_argument("paths", nargs="+")
     s.add_argument("--date", help="date for these sources (YYYY-MM-DD) if not in front matter")
-    s.add_argument("--authorship", choices=["by_me", "ai_assisted"], help="who wrote these (asked if omitted)")
+    s.add_argument("--authorship", choices=["by_me", "ai_assisted"],
+                   help="by_me: written by the subject (you, in self mode); asked if omitted")
     s.set_defaults(func=cmd_ingest)
 
-    s = sub.add_parser("add", help="add your content: a website/blog URL, a file or a folder")
-    s.add_argument("target", help="e.g. yourname.com, https://you.substack.com, ~/writing")
-    s.add_argument("--authorship", choices=["by_me", "ai_assisted"], help="who wrote it (asked if omitted)")
+    s = sub.add_parser("add", help="add content: a website/blog URL, a file or a folder")
+    s.add_argument("target", help="e.g. theirname.com, https://name.substack.com, ~/writing")
+    s.add_argument("--authorship", choices=["by_me", "ai_assisted"],
+                   help="by_me: written by the subject (you, in self mode); asked if omitted")
     s.add_argument("--max-pages", type=int, default=200)
     s.add_argument("--exclude", action="append", default=[], metavar="REGEX", help="skip URLs matching this (repeatable)")
     s.add_argument("--dry-run", action="store_true", help="show what would be imported, import nothing")
@@ -357,7 +406,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-v", "--verbose", action="store_true", help="list skipped pages and why")
     s.set_defaults(func=cmd_add)
 
-    s = sub.add_parser("authorship", help="mark a source as written by you or AI-assisted")
+    s = sub.add_parser("authorship", help="mark a source as written by the subject (by_me) or not (ai_assisted)")
     s.add_argument("source_id")
     s.add_argument("value", choices=["by_me", "ai_assisted"])
     s.set_defaults(func=cmd_authorship)
@@ -392,11 +441,11 @@ def build_parser() -> argparse.ArgumentParser:
     evsub = ev.add_subparsers(dest="eval_command", required=True)
     evsub.add_parser("init", help="create eval.yaml for your questions and answers").set_defaults(func=cmd_eval_init)
     s = evsub.add_parser("run", help="run all arms, judge them, write a report and a blind rating sheet")
-    s.add_argument("--arms", help="comma-separated subset of: citeself,bio_only,generic")
+    s.add_argument("--arms", help="comma-separated subset of: anyone,bio_only,generic")
     s.add_argument("--no-judge", action="store_true", help="skip LLM judging (blind sheet only)")
     s.add_argument("--limit", type=int, help="only the first N questions")
     s.add_argument("--yes", action="store_true", help="skip the cost confirmation")
-    s.add_argument("--provider", choices=["anthropic", "extractive"], help="override provider for the citeself arm")
+    s.add_argument("--provider", choices=["anthropic", "extractive"], help="override provider for the anyone arm")
     s.set_defaults(func=cmd_eval_run)
     s = evsub.add_parser("score", help="score your filled-in blind rating sheet")
     s.add_argument("run_dir")

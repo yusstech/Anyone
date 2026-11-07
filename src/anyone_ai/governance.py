@@ -6,19 +6,19 @@ import json
 import shutil
 from pathlib import Path
 
-from .manifest import DATA_DIR, load_manifest
+from .manifest import data_dir as _data_dir, load_manifest
 from .store import Store
 
 
 def revoke(root: Path) -> Path:
-    """Delete the index (sources, chunks, search index) under .citeself/ and write a receipt.
+    """Delete the index (sources, chunks, search index) under .anyone/ and write a receipt.
 
     The owner's original files are never touched: they belong to the owner, and
-    CiteSelf only ever read them. Conversations are not stored, so there is
+    Anyone only ever read them. Conversations are not stored, so there is
     nothing else to delete. Returns the receipt path.
     """
     manifest = load_manifest(root)
-    data_dir = root / DATA_DIR
+    data_dir = _data_dir(root)
     db = data_dir / "index.db"
     stats, hashes = {"sources": 0, "excluded": 0, "chunks": 0}, []
     if db.exists():
@@ -28,8 +28,8 @@ def revoke(root: Path) -> Path:
         shutil.rmtree(data_dir)
     now = _dt.datetime.now(_dt.timezone.utc)
     receipt = {
-        "type": "citeself.revocation",
-        "persona": manifest.persona.name,
+        "type": "anyone.revocation",
+        "persona": manifest.subject.name,
         "revoked_at": now.isoformat(timespec="seconds"),
         "deleted": {"directory": str(data_dir), **stats},
         # Hashes let the owner confirm *which* material was removed without the receipt containing it.

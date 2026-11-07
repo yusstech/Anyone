@@ -1,5 +1,5 @@
-from citeself.store import Evidence
-from citeself.validate import FALLBACK_NO_EVIDENCE, validate_segments
+from anyone_ai.store import Evidence
+from anyone_ai.validate import FALLBACK_NO_EVIDENCE, validate_segments
 
 EV = {
     "E1": Evidence("c1", "s1", "Talk", "2026-03-21", "p", "I do not want teams to hide every risk until launch day. "

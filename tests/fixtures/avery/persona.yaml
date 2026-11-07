@@ -1,8 +1,9 @@
 # Test fixture. Avery Moreno is ENTIRELY FICTIONAL; all sources are invented.
-citeself: 1
-persona:
+anyone: 2
+subject:
+  kind: self
   name: Avery Moreno
-  bio: Fictional product leader used as a CiteSelf test fixture.
+  bio: Fictional product leader used as an Anyone test fixture.
 consent:
   self_attested: true
   attested_by: Avery Moreno (fictional fixture)

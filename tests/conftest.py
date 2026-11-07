@@ -3,9 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from citeself.manifest import DATA_DIR
-from citeself.providers import GenerationRequest, GenerationResult
-from citeself.store import Store
+from anyone_ai.manifest import DATA_DIR
+from anyone_ai.providers import GenerationRequest, GenerationResult
+from anyone_ai.store import Store
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

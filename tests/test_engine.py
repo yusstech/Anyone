@@ -1,10 +1,10 @@
 import pytest
 import yaml
 
-from citeself.engine import Conversation, Persona, build_system_prompt
-from citeself.manifest import DATA_DIR, ConsentError, load_manifest
-from citeself.providers import ExtractiveProvider, GenerationResult, MalformedOutput
-from citeself.store import Store
+from anyone_ai.engine import Conversation, Persona, build_system_prompt
+from anyone_ai.manifest import DATA_DIR, ConsentError, load_manifest
+from anyone_ai.providers import ExtractiveProvider, GenerationResult, MalformedOutput
+from anyone_ai.store import Store
 
 from .conftest import FIXTURES, FakeProvider
 

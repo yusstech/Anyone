@@ -11,6 +11,7 @@ build/
 .env.*
 
 # Per-persona derived data (index, sessions). Owners' corpora stay out of the repo.
+.anyone/
 .citeself/
 revocation-receipt*.json
 

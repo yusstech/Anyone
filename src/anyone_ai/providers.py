@@ -190,7 +190,7 @@ _SENTENCES = re.compile(r"[^.!?]+[.!?]+")
 class ExtractiveProvider:
     """Offline, no-LLM mode: returns the most relevant passages as verbatim quotes.
 
-    Useful for trying CiteSelf without an API key and as an evaluation baseline.
+    Useful for trying Anyone without an API key and as an evaluation baseline.
     """
     name = "extractive"
 

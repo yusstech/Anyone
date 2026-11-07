@@ -18,7 +18,7 @@ async function loadInfo() {
   $("name").textContent = info.name;
   $("bio").textContent = info.bio || "";
   $("disclosure").textContent = info.disclosure;
-  document.title = `${info.name} · CiteSelf`;
+  document.title = `${info.name} · Anyone`;
   if (info.provider === "extractive") {
     $("disclosure").textContent += " Offline mode: answers show the closest passages only.";
   }
@@ -122,7 +122,7 @@ async function ask(question) {
     }
   } catch (err) {
     pending.remove();
-    $("log").append(el("li", "error", "Could not reach the local CiteSelf server."));
+    $("log").append(el("li", "error", "Could not reach the local Anyone server."));
   } finally {
     $("send").disabled = false;
     $("q").focus();
@@ -130,7 +130,7 @@ async function ask(question) {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  loadInfo().catch(() => { $("name").textContent = "CiteSelf"; });
+  loadInfo().catch(() => { $("name").textContent = "Anyone"; });
   $("ask").addEventListener("submit", (e) => {
     e.preventDefault();
     const q = $("q").value.trim();

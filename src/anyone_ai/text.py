@@ -211,7 +211,7 @@ def extract(path: Path) -> Extracted:
         try:
             from pypdf import PdfReader
         except ImportError as exc:  # pragma: no cover - depends on extras
-            raise ValueError("PDF support needs the 'pdf' extra: pip install 'citeself[pdf]'") from exc
+            raise ValueError("PDF support needs the 'pdf' extra: pip install 'anyone-ai[pdf]'") from exc
         reader = PdfReader(str(path))
         text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
         title = (reader.metadata.title if reader.metadata and reader.metadata.title else "") or path.stem

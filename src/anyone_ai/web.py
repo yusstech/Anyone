@@ -1,4 +1,4 @@
-"""Local web UI: ``citeself serve``. Standard library only; binds to loopback by default.
+"""Local web UI: ``anyone serve``. Standard library only; binds to loopback by default.
 
 Conversations live in server memory only and are never written to disk or logs.
 """
@@ -44,14 +44,14 @@ class App:
         m = self.persona.manifest
         with self.lock:
             sources = [s for s in self.persona.store.list_sources() if not s.excluded]
-        return {"name": m.persona.name, "bio": m.persona.bio, "disclosure": m.disclosure,
+        return {"name": m.subject.name, "subject_kind": m.subject.kind, "bio": m.subject.bio, "disclosure": m.disclosure,
                 "blocked_topics": m.boundaries.blocked_topics, "source_count": len(sources),
                 "provider": self.persona.provider.name}
 
 
 def make_handler(app: App, allowed_hosts: set[str]):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "citeself"
+        server_version = "anyone"
         sys_version = ""
 
         def log_message(self, *args):  # never log requests: URLs/bodies may contain questions
@@ -82,7 +82,7 @@ def make_handler(app: App, allowed_hosts: set[str]):
             path = self.path.split("?", 1)[0]
             if path in STATIC:
                 fname, ctype = STATIC[path]
-                body = resources.files("citeself").joinpath("web", fname).read_bytes()
+                body = resources.files("anyone_ai").joinpath("web", fname).read_bytes()
                 self._headers(200, ctype, len(body))
                 return self.wfile.write(body)
             if path == "/api/info":
@@ -128,7 +128,7 @@ def make_handler(app: App, allowed_hosts: set[str]):
 def serve(root: Path, host: str = "127.0.0.1", port: int = 8765, provider_override: str | None = None) -> None:
     app = App(root, provider_override=provider_override)
     httpd = make_server(app, host, port)
-    print(f"CiteSelf: {app.persona.manifest.persona.name} at http://{host}:{httpd.server_port}  (Ctrl-C to stop)")
+    print(f"Anyone: {app.persona.manifest.subject.name} at http://{host}:{httpd.server_port}  (Ctrl-C to stop)")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
