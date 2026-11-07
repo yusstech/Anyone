@@ -34,7 +34,7 @@ dev = ["pytest>=8", "pypdf>=4.0", "mcp>=2.3"]
 anyone = "anyone_ai.cli:main"
 
 [project.urls]
-Repository = "https://github.com/yusstech/PersonaLab"
+Repository = "https://github.com/yusstech/Anyone"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/anyone_ai"]

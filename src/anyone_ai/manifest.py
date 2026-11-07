@@ -288,7 +288,7 @@ def write_new_manifest(root: Path, name: str, kind: str = "self", research: Rese
                        "have the right to use, and I can revoke it at any time."),
         )
     manifest = Manifest(subject=Subject(kind=kind, name=name), consent=consent, research=research or Research())
-    header = _HEADERS[kind] + "# Docs: https://github.com/yusstech/PersonaLab\n"
+    header = _HEADERS[kind] + "# Docs: https://github.com/yusstech/Anyone\n"
     body = yaml.safe_dump(manifest.model_dump(exclude_none=True), sort_keys=False, allow_unicode=True)
     path.write_text(header + body, encoding="utf-8")
     return path

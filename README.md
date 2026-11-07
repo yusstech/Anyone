@@ -47,7 +47,7 @@ Anyone is text-only. It does not clone voices or faces, and it does not format o
 Requires Python 3.10+.
 
 ```bash
-pip install "anyone-ai[pdf,mcp] @ git+https://github.com/yusstech/PersonaLab"
+pip install "anyone-ai[pdf,mcp] @ git+https://github.com/yusstech/Anyone"
 
 # Someone else: Anyone researches them (needs an API key, below)
 anyone new "Paul Graham" --link paulgraham.com --x-handle paulg --hint "essayist, Y Combinator co-founder"
@@ -244,7 +244,7 @@ The test persona, Avery Moreno, is entirely fictional.
 
 I designed it and made the product and trust decisions. The code was written with Claude (Anthropic) as an AI pair programmer under my direction, and the commits are co-authored. The offline test suite covers every change.
 
-Questions and feedback: [GitHub Issues](https://github.com/yusstech/PersonaLab/issues) or [@yusstech](https://github.com/yusstech).
+Questions and feedback: [GitHub Issues](https://github.com/yusstech/Anyone/issues) or [@yusstech](https://github.com/yusstech).
 
 ## License
 
